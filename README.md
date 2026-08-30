@@ -24,18 +24,19 @@ AI coding sessions become expensive and fragile when conversation history grows 
 6. Commit, archive, and push are opt-in operations.
 7. Fresh context is the default; conversation continuation is explicit.
 
-## Future usage (planned)
+## Installation
 
-The `run` subcommand with agent adapters, model chains, and verification hooks is planned for a subsequent change. The minimal runner currently supports direct command execution only.
-
-## Quick start
-
-Install and run:
+From a checkout:
 
 ```bash
 pip install -e .
 sisyphusfy --help
 ```
+
+The package requires Python 3.10 or newer. OpenCode, CodeBuddy, and any
+project-specific verification tools are installed separately.
+
+## Quick start: one invocation
 
 Run a command with timeout:
 
@@ -58,7 +59,7 @@ sisyphusfy --json -- python3 script.py
 Deliver a prompt via stdin:
 
 ```bash
-sisyphusfy -p "fix the bug in auth.py" -- opencode run
+sisyphusfy -p "explain this repository" -- opencode run
 ```
 
 Set working directory and environment variables:
@@ -67,7 +68,145 @@ Set working directory and environment variables:
 sisyphusfy -d /path/to/project -t 60 -e API_KEY=abc123 -e DEBUG=1 -- my-agent
 ```
 
-Programmatic usage:
+## Quick start: human-friendly workflow
+
+The high-level commands provide a simpler interface for common workflows.
+They automatically discover tasks, configuration, and agent settings.
+
+Initialize a project:
+
+```bash
+sisyphusfy init
+```
+
+Run an OpenSpec change:
+
+```bash
+sisyphusfy run my-change
+```
+
+Resume from durable state:
+
+```bash
+sisyphusfy resume
+```
+
+Check project status:
+
+```bash
+sisyphusfy status
+```
+
+Diagnose configuration issues:
+
+```bash
+sisyphusfy doctor
+```
+
+Dry-run to preview planned actions:
+
+```bash
+sisyphusfy run my-change --dry-run
+```
+
+Use JSON output for automation:
+
+```bash
+sisyphusfy status --json
+```
+
+Configuration precedence: CLI flags > `.sisyphusfy.toml` > user defaults > built-in defaults.
+
+## Quick start: durable loop
+
+The loop starts a fresh agent process for every iteration. The task file and
+handoff file are the durable state; previous agent conversation history is not
+restored.
+
+For a Markdown checklist:
+
+```bash
+sisyphusfy loop \
+  --task-path TASKS.md \
+  --handoff-path HANDOFF.md \
+  --completion-strategy markdown \
+  --adapter opencode \
+  --model-chain mimo-v2.5 minimax-3 \
+  --agent-timeout 2700 \
+  --max-iterations 20 \
+  --verification-command pytest
+```
+
+Use CodeBuddy instead:
+
+```bash
+sisyphusfy loop \
+  --task-path TASKS.md \
+  --handoff-path HANDOFF.md \
+  --completion-strategy markdown \
+  --adapter codebuddy \
+  --model-chain minimax-3
+```
+
+For an OpenSpec change, point the workflow adapter at the change directory:
+
+```bash
+sisyphusfy loop \
+  --task-path openspec/changes/my-change/tasks.md \
+  --handoff-path HANDOFF.md \
+  --workflow-type openspec \
+  --workflow-change-dir openspec/changes/my-change \
+  --workflow-validation-command openspec validate my-change --strict \
+  --adapter opencode \
+  --model-chain mimo-v2.5 minimax-3
+```
+
+The default prompt is intentionally short. It asks the agent to read the
+configured task and handoff files, implement one task, update state, and stop
+when blocked. Override it with `--prompt-template` when a project needs a
+different instruction contract.
+
+## Dry-run and machine output
+
+Preview a single command without executing it:
+
+```bash
+sisyphusfy --dry-run -- echo "hello world"
+```
+
+Preview the loop and hooks:
+
+```bash
+sisyphusfy loop --dry-run \
+  --task-path TASKS.md \
+  --completion-strategy markdown \
+  --adapter opencode \
+  --model-chain mimo-v2.5
+```
+
+Use `--json` for automation and CI consumers.
+
+## Optional completion hooks
+
+Archive and commit hooks are disabled by default. Enable them only after
+verification, and always provide an explicit commit allowlist:
+
+```bash
+sisyphusfy loop \
+  --task-path openspec/changes/my-change/tasks.md \
+  --workflow-type openspec \
+  --workflow-change-dir openspec/changes/my-change \
+  --workflow-validation-command openspec validate my-change --strict \
+  --adapter opencode \
+  --archive-command openspec archive my-change -y \
+  --commit-command git commit -m "feat: complete my change" \
+  --commit-allowed-files src README.md
+```
+
+Review the dry-run output before enabling these hooks. Sisyphusfy does not
+provide automatic push support.
+
+## Programmatic usage
 
 ```python
 from sisyphusfy.runner import run_agent
@@ -93,15 +232,17 @@ Development is tracked with OpenSpec. See `openspec/changes/` for active work an
 
 ```bash
 openspec list
-openspec status --change implement-minimal-runner
-openspec validate implement-minimal-runner --strict
+openspec list
+openspec validate --all --strict
 ```
 
 The repository is initialized for both OpenCode and CodeBuddy workflows. Those integrations are development conveniences; the product itself remains agent-neutral.
 
 ## Status
 
-This repository contains the product design, roadmap, and core implementation. The runner, loop engine, agent adapters, workflow integrations, and completion hooks are implemented and tested.
+This repository contains the product design, roadmap, core implementation, and
+OpenSpec history. The runner, loop engine, agent adapters, workflow
+integrations, and completion hooks are implemented and tested.
 
 ### Implemented capabilities
 
@@ -113,6 +254,10 @@ This repository contains the product design, roadmap, and core implementation. T
 - Configurable blocked-signal detection across stdout and stderr.
 - Opt-in archive and commit hooks with explicit file allowlists.
 - Default token-efficient prompt when no custom template is configured.
+- Human-friendly CLI: `init`, `run`, `resume`, `status`, `doctor` subcommands.
+- Project configuration in `.sisyphusfy.toml` with documented precedence.
+- Automatic OpenSpec change discovery and task/handoff file detection.
+- Human-readable progress, fallback, blocker, and next-action output.
 
 ## Name
 

@@ -8,8 +8,8 @@ Release-ready codebase with passing quality gates.
 
 - MIT License selected.
 - OpenSpec initialized for OpenCode and CodeBuddy workflows.
-- All 7 changes archived: minimal-runner, durable-iteration-loop, agent-adapters-and-model-fallback, workflow-integrations, optional-archive-commit-hooks, audit-and-fix-agent-workflow, repair-final-workflow-safety.
-- Main specs synced: `minimal-runner`, `iteration-loop`, `agent-adapters`, `workflows`, `agent-workflow`, `workflow-safety`.
+- 8 changes archived: minimal-runner, durable-iteration-loop, agent-adapters-and-model-fallback, workflow-integrations, optional-archive-commit-hooks, audit-and-fix-agent-workflow, repair-final-workflow-safety, improve-human-friendly-cli.
+- Main specs synced: `minimal-runner`, `iteration-loop`, `agent-adapters`, `workflows`, `agent-workflow`, `workflow-safety`, `human-cli`.
 - All main specs use canonical `## Purpose` / `## Requirements` format.
 - Durable iteration loop in `src/sisyphusfy/loop.py` with dry-run propagation through agent, verification, and hook boundaries.
 - CLI `loop` subcommand in `src/sisyphusfy/cli.py`.
@@ -17,7 +17,11 @@ Release-ready codebase with passing quality gates.
 - Completion hooks in `src/sisyphusfy/hooks.py` with commit path canonicalization, escape rejection, and allowlisted git staging.
 - Workflow adapters reload state between observations.
 - Default token-efficient prompt; blocked-signal detection on stdout and stderr.
-- 241 tests across 21 test files; `ruff check` clean; `compileall` clean; `openspec validate --all --strict` passes.
+- Human-friendly CLI: `init`, `run`, `resume`, `status`, `doctor` subcommands.
+- Project configuration in `.sisyphusfy.toml` with precedence: CLI > project > user defaults > built-in.
+- Automatic OpenSpec change discovery, task/handoff file detection, and verification command auto-detection.
+- Human-readable progress, fallback, blocker, and next-action output with JSON compatibility.
+- 297 tests across 23 test files; `ruff check` clean; `compileall` clean; `openspec validate --all --strict` passes.
 - Package builds cleanly.
 
 ## Next action

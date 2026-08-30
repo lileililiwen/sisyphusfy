@@ -6,6 +6,8 @@ import sys
 
 from sisyphusfy.runner import run_agent
 
+HIGH_LEVEL_SUBCOMMANDS = {"init", "run", "resume", "status", "doctor"}
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -166,6 +168,118 @@ def build_loop_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Print hook commands without executing"
+    )
+    parser.add_argument(
+        "--json", dest="output_json", action="store_true", help="Output structured JSON"
+    )
+    return parser
+
+
+def build_init_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="sisyphusfy init",
+        description="Create project-local configuration",
+    )
+    parser.add_argument(
+        "--project-dir", "-d", default=".", help="Project directory"
+    )
+    parser.add_argument(
+        "--force", "-f", action="store_true", help="Overwrite existing configuration"
+    )
+    parser.add_argument(
+        "--json", dest="output_json", action="store_true", help="Output structured JSON"
+    )
+    return parser
+
+
+def build_run_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="sisyphusfy run",
+        description="Run a change with automatic workflow discovery",
+    )
+    parser.add_argument(
+        "change", nargs="?", default=None, help="OpenSpec change name or task path"
+    )
+    parser.add_argument(
+        "--project-dir", "-d", default=".", help="Project directory"
+    )
+    parser.add_argument(
+        "--adapter", default=None, help="Agent adapter (default: config or opencode)"
+    )
+    parser.add_argument(
+        "--model-chain", nargs="*", default=None, help="Ordered models for fallback"
+    )
+    parser.add_argument(
+        "--max-iterations", type=int, default=None, help="Maximum iterations"
+    )
+    parser.add_argument(
+        "--agent-timeout", type=float, default=None, help="Agent timeout in seconds"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show planned actions without executing"
+    )
+    parser.add_argument(
+        "--archive", action="store_true", help="Enable archive hook on completion"
+    )
+    parser.add_argument(
+        "--commit", action="store_true", help="Enable commit hook on completion"
+    )
+    parser.add_argument(
+        "--json", dest="output_json", action="store_true", help="Output structured JSON"
+    )
+    return parser
+
+
+def build_resume_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="sisyphusfy resume",
+        description="Continue from task and handoff files",
+    )
+    parser.add_argument(
+        "--project-dir", "-d", default=".", help="Project directory"
+    )
+    parser.add_argument(
+        "--adapter", default=None, help="Agent adapter"
+    )
+    parser.add_argument(
+        "--model-chain", nargs="*", default=None, help="Ordered models for fallback"
+    )
+    parser.add_argument(
+        "--max-iterations", type=int, default=None, help="Maximum iterations"
+    )
+    parser.add_argument(
+        "--agent-timeout", type=float, default=None, help="Agent timeout in seconds"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show planned actions without executing"
+    )
+    parser.add_argument(
+        "--json", dest="output_json", action="store_true", help="Output structured JSON"
+    )
+    return parser
+
+
+def build_status_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="sisyphusfy status",
+        description="Show project state and task progress",
+    )
+    parser.add_argument(
+        "--project-dir", "-d", default=".", help="Project directory"
+    )
+    parser.add_argument(
+        "--json", dest="output_json", action="store_true", help="Output structured JSON"
+    )
+    return parser
+
+
+def build_doctor_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="sisyphusfy doctor",
+        description="Check project configuration and prerequisites",
+    )
+    parser.add_argument(
+        "--project-dir", "-d", default=".", help="Project directory"
     )
     parser.add_argument(
         "--json", dest="output_json", action="store_true", help="Output structured JSON"
@@ -391,11 +505,97 @@ def _run_loop(argv: list[str] | None) -> None:
     sys.exit(0 if result.stop_reason.value == "complete" else 1)
 
 
+def _run_init(argv: list[str]) -> None:
+    from sisyphusfy.human import cmd_init
+
+    parser = build_init_parser()
+    args = parser.parse_args(argv)
+    code = cmd_init(
+        project_dir=args.project_dir,
+        force=args.force,
+        json_output=args.output_json,
+    )
+    sys.exit(code)
+
+
+def _run_run(argv: list[str]) -> None:
+    from sisyphusfy.human import cmd_run
+
+    parser = build_run_parser()
+    args = parser.parse_args(argv)
+    code = cmd_run(
+        project_dir=args.project_dir,
+        change=args.change,
+        json_output=args.output_json,
+        dry_run=args.dry_run,
+        archive=args.archive,
+        commit=args.commit,
+        max_iterations=args.max_iterations,
+        adapter=args.adapter,
+        model_chain=args.model_chain,
+        agent_timeout=args.agent_timeout,
+    )
+    sys.exit(code)
+
+
+def _run_resume(argv: list[str]) -> None:
+    from sisyphusfy.human import cmd_resume
+
+    parser = build_resume_parser()
+    args = parser.parse_args(argv)
+    code = cmd_resume(
+        project_dir=args.project_dir,
+        json_output=args.output_json,
+        dry_run=args.dry_run,
+        max_iterations=args.max_iterations,
+        adapter=args.adapter,
+        model_chain=args.model_chain,
+        agent_timeout=args.agent_timeout,
+    )
+    sys.exit(code)
+
+
+def _run_status(argv: list[str]) -> None:
+    from sisyphusfy.human import cmd_status
+
+    parser = build_status_parser()
+    args = parser.parse_args(argv)
+    code = cmd_status(
+        project_dir=args.project_dir,
+        json_output=args.output_json,
+    )
+    sys.exit(code)
+
+
+def _run_doctor(argv: list[str]) -> None:
+    from sisyphusfy.human import cmd_doctor
+
+    parser = build_doctor_parser()
+    args = parser.parse_args(argv)
+    code = cmd_doctor(
+        project_dir=args.project_dir,
+        json_output=args.output_json,
+    )
+    sys.exit(code)
+
+
+_SUBCOMMAND_HANDLERS = {
+    "init": _run_init,
+    "run": _run_run,
+    "resume": _run_resume,
+    "status": _run_status,
+    "doctor": _run_doctor,
+}
+
+
 def main(argv: list[str] | None = None) -> None:
     if argv is None:
         argv = sys.argv[1:]
 
-    if argv and argv[0] == "loop":
+    if argv and argv[0] in _SUBCOMMAND_HANDLERS:
+        handler = _SUBCOMMAND_HANDLERS[argv[0]]
+        handler(argv[1:])
+    elif argv and argv[0] == "loop":
         _run_loop(argv)
     else:
         _run_single(argv)
