@@ -78,6 +78,13 @@ def run_hook(config: HookConfig, dry_run: bool = False) -> HookResult:
             error="no command configured",
         )
 
+    if config.hook_type == HookType.COMMIT and not config.allowed_files:
+        return HookResult(
+            hook_type=config.hook_type,
+            status=HookStatus.SKIPPED,
+            error="commit hook requires explicit allowed_files; refusing to stage the whole workspace",
+        )
+
     if dry_run:
         return HookResult(
             hook_type=config.hook_type,

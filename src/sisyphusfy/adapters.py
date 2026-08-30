@@ -96,9 +96,11 @@ class OpenCodeAdapter:
         working_directory: str,
         prompt: str | None = None,
     ) -> list[str]:
-        cmd = ["opencode", "--non-interactive"]
+        cmd = ["opencode", "run"]
         if self.model:
             cmd.extend(["--model", self.model])
+        if prompt:
+            cmd.append(prompt)
         return cmd
 
     def supports_model(self, model: str) -> bool:
@@ -123,9 +125,11 @@ class CodeBuddyAdapter:
         working_directory: str,
         prompt: str | None = None,
     ) -> list[str]:
-        cmd = ["codebuddy", "--non-interactive"]
+        cmd = ["codebuddy", "-p"]
         if self.model:
             cmd.extend(["--model", self.model])
+        if prompt:
+            cmd.append(prompt)
         return cmd
 
     def supports_model(self, model: str) -> bool:

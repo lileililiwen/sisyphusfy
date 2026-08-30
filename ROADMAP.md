@@ -20,28 +20,28 @@
 
 ## Phase 2 — Durable iteration loop
 
-- [ ] Detect incomplete task state through a configurable strategy.
-- [ ] Check that task state or handoff changed after a productive iteration.
-- [ ] Run an optional verification command after each iteration.
-- [ ] Stop on success, failure, timeout, unchanged state, or maximum iterations.
-- [ ] Write structured run results for humans and automation.
-- [ ] Keep handoff content outside the runner's generated logs.
+- [x] Detect incomplete task state through a configurable strategy.
+- [x] Check that task state or handoff changed after a productive iteration.
+- [x] Run an optional verification command after each iteration.
+- [x] Stop on success, failure, timeout, unchanged state, or maximum iterations.
+- [x] Write structured run results for humans and automation.
+- [x] Keep handoff content outside the runner's generated logs.
 
 ## Phase 3 — Model and agent resilience
 
-- [ ] Add the OpenCode adapter.
-- [ ] Add the CodeBuddy adapter.
-- [ ] Add ordered model fallback.
-- [ ] Classify retryable provider failures separately from task failures.
-- [ ] Detect permission/choice blocking and stop with an actionable status.
-- [ ] Support user resumption without restoring conversation history.
+- [x] Add the OpenCode adapter.
+- [x] Add the CodeBuddy adapter.
+- [x] Add ordered model fallback.
+- [x] Classify retryable provider failures separately from task failures.
+- [x] Detect permission/choice blocking and stop with an actionable status.
+- [x] Support user resumption without restoring conversation history.
 
 ## Phase 4 — Workflow integrations
 
-- [ ] Provide an OpenSpec example adapter.
-- [ ] Provide Markdown checklist and JSON task-state adapters.
-- [ ] Support configurable completion commands.
-- [ ] Add opt-in archive and commit hooks.
+- [x] Provide an OpenSpec example adapter.
+- [x] Provide Markdown checklist and JSON task-state adapters.
+- [x] Support configurable completion commands.
+- [x] Add opt-in archive and commit hooks.
 - [ ] Add CI examples and a security review for command execution.
 
 ## Phase 5 — Public release

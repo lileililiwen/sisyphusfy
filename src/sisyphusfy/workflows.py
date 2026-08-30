@@ -20,6 +20,7 @@ class WorkflowAdapter(Protocol):
     def is_complete(self) -> bool: ...
     def explain(self) -> str: ...
     def snapshot(self) -> dict[str, str]: ...
+    def reload(self) -> None: ...
 
 
 @dataclass
@@ -95,6 +96,9 @@ class MarkdownChecklistAdapter:
         self._ensure_loaded()
         return {"task_path": self._content}
 
+    def reload(self) -> None:
+        self._content = None
+
 
 class JSONPredicateAdapter:
     def __init__(self, state_path: str, predicate: str) -> None:
@@ -163,6 +167,9 @@ class JSONPredicateAdapter:
         self._ensure_loaded()
         return {"state_path": json.dumps(self._data, indent=2)}
 
+    def reload(self) -> None:
+        self._data = None
+
 
 class ExternalCommandAdapter:
     def __init__(self, check_command: list[str], timeout: float = 30.0) -> None:
@@ -195,6 +202,9 @@ class ExternalCommandAdapter:
 
     def snapshot(self) -> dict[str, str]:
         return {"command": " ".join(self._check_command)}
+
+    def reload(self) -> None:
+        self._last_returncode = None
 
 
 class OpenSpecAdapter:
@@ -260,6 +270,9 @@ class OpenSpecAdapter:
     def snapshot(self) -> dict[str, str]:
         self._ensure_tasks_loaded()
         return {"tasks": self._tasks_content}
+
+    def reload(self) -> None:
+        self._tasks_content = None
 
 
 def render_handoff_prompt(

@@ -101,7 +101,18 @@ The repository is initialized for both OpenCode and CodeBuddy workflows. Those i
 
 ## Status
 
-This repository currently contains the product design and roadmap. The first implementation target is a small, testable command runner with configurable agent adapters, model fallback, task-state checks, timeouts, and verification hooks.
+This repository contains the product design, roadmap, and core implementation. The runner, loop engine, agent adapters, workflow integrations, and completion hooks are implemented and tested.
+
+### Implemented capabilities
+
+- Fresh agent sessions with no conversation history carry-over.
+- Durable iteration loop with configurable completion, verification, and timeout.
+- OpenCode adapter (`opencode run --model <model>`), CodeBuddy adapter (`codebuddy -p`), and generic command adapter.
+- Model-chain fallback with retryable/non-retryable failure classification.
+- Workflow adapters: Markdown checklists, JSON predicates, external commands, OpenSpec tasks.
+- Configurable blocked-signal detection across stdout and stderr.
+- Opt-in archive and commit hooks with explicit file allowlists.
+- Default token-efficient prompt when no custom template is configured.
 
 ## Name
 

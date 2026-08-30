@@ -96,6 +96,7 @@ class LoopConfig:
     dry_run: bool = False
     workflow_adapter: WorkflowAdapter | None = None
     workflow_config: WorkflowConfig | None = None
+    blocked_markers: list[str] = field(default_factory=lambda: list(BLOCKED_MARKERS))
 
 
 @dataclass
@@ -151,12 +152,25 @@ def _changed(before: dict[str, str], after: dict[str, str]) -> bool:
     return before != after
 
 
-def _is_blocked(result: object) -> bool:
+def _is_blocked(result: object, markers: list[str] | None = None) -> bool:
+    if markers is None:
+        markers = list(BLOCKED_MARKERS)
+    stdout = getattr(result, "stdout", "") or ""
     stderr = getattr(result, "stderr", "") or ""
-    return any(marker.lower() in stderr.lower() for marker in BLOCKED_MARKERS)
+    combined = stdout + stderr
+    return any(marker.lower() in combined.lower() for marker in markers)
+
+
+DEFAULT_PROMPT_TEMPLATE = (
+    "Read {task_path} and any handoff at {handoff_path}. "
+    "Implement one task. Update the handoff with what you did and what comes next. "
+    "If you are blocked, write a short explanation and stop."
+)
 
 
 def _render_prompt(template: str, **kwargs: str) -> str:
+    if not template.strip():
+        template = DEFAULT_PROMPT_TEMPLATE
     try:
         return template.format(**kwargs)
     except KeyError:
@@ -314,7 +328,7 @@ def run_loop(config: LoopConfig) -> LoopResult:
                 model_attempts=all_model_attempts,
             )
 
-        if _is_blocked(result):
+        if _is_blocked(result, config.blocked_markers):
             return LoopResult(
                 stop_reason=LoopStopReason.BLOCKED,
                 iterations=i,
@@ -323,6 +337,31 @@ def run_loop(config: LoopConfig) -> LoopResult:
                 final_handoff_path=handoff_path,
                 model_attempts=all_model_attempts,
             )
+
+        if config.verification_command:
+            vr = run_agent(
+                config.verification_command,
+                working_directory=config.working_directory,
+                timeout=config.verification_timeout,
+            )
+            if vr.timed_out:
+                return LoopResult(
+                    stop_reason=LoopStopReason.TIMEOUT,
+                    iterations=i,
+                    run_records=run_records,
+                    final_task_path=task_path,
+                    final_handoff_path=handoff_path,
+                    model_attempts=all_model_attempts,
+                )
+            if vr.classification.value != "success":
+                return LoopResult(
+                    stop_reason=LoopStopReason.VERIFICATION_FAILED,
+                    iterations=i,
+                    run_records=run_records,
+                    final_task_path=task_path,
+                    final_handoff_path=handoff_path,
+                    model_attempts=all_model_attempts,
+                )
 
         if config.completion_strategy and not config.completion_strategy.has_work(task_path):
             pipeline_result = None
@@ -338,19 +377,21 @@ def run_loop(config: LoopConfig) -> LoopResult:
                 completion_pipeline_result=pipeline_result,
             )
 
-        if workflow_adapter is not None and not workflow_adapter.has_work():
-            pipeline_result = None
-            if config.completion_hooks:
-                pipeline_result = run_completion_pipeline(config.completion_hooks, dry_run=config.dry_run)
-            return LoopResult(
-                stop_reason=LoopStopReason.COMPLETE,
-                iterations=i,
-                run_records=run_records,
-                final_task_path=task_path,
-                final_handoff_path=handoff_path,
-                model_attempts=all_model_attempts,
-                completion_pipeline_result=pipeline_result,
-            )
+        if workflow_adapter is not None:
+            workflow_adapter.reload()
+            if not workflow_adapter.has_work():
+                pipeline_result = None
+                if config.completion_hooks:
+                    pipeline_result = run_completion_pipeline(config.completion_hooks, dry_run=config.dry_run)
+                return LoopResult(
+                    stop_reason=LoopStopReason.COMPLETE,
+                    iterations=i,
+                    run_records=run_records,
+                    final_task_path=task_path,
+                    final_handoff_path=handoff_path,
+                    model_attempts=all_model_attempts,
+                    completion_pipeline_result=pipeline_result,
+                )
 
         if config.verification_command:
             vr = run_agent(

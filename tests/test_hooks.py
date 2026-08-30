@@ -77,6 +77,7 @@ class TestDryRunHooks:
         config = HookConfig(
             hook_type=HookType.COMMIT,
             command=["git", "commit", "-m", "test"],
+            allowed_files=["*.py"],
             enabled=True,
         )
         result = run_hook(config, dry_run=True)
@@ -91,6 +92,7 @@ class TestDryRunHooks:
             hook_type=HookType.COMMIT,
             command=["rm", str(file_path)],
             working_directory=str(tmp_path),
+            allowed_files=["*.txt"],
             enabled=True,
         )
         result = run_hook(config, dry_run=True)
@@ -176,6 +178,7 @@ class TestCommitHook:
         config = HookConfig(
             hook_type=HookType.COMMIT,
             command=script,
+            allowed_files=["*.py"],
             enabled=True,
         )
         result = run_hook(config)
@@ -203,6 +206,7 @@ class TestCommitHook:
             HookConfig(
                 hook_type=HookType.COMMIT,
                 command=fail_script,
+                allowed_files=["*.py"],
                 enabled=True,
             ),
             HookConfig(
@@ -244,6 +248,7 @@ class TestCompletionPipeline:
             HookConfig(
                 hook_type=HookType.COMMIT,
                 command=script2,
+                allowed_files=["*.py"],
                 enabled=True,
             ),
         ]

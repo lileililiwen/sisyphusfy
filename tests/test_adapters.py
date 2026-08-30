@@ -73,13 +73,16 @@ class TestOpenCodeAdapter:
     def test_build_command_no_model(self) -> None:
         adapter = OpenCodeAdapter()
         cmd = adapter.build_command("/tmp/work", "hello")
-        assert cmd == ["opencode", "--non-interactive"]
+        assert cmd == ["opencode", "run", "hello"]
 
     def test_build_command_with_model(self) -> None:
         adapter = OpenCodeAdapter(model="claude-3")
         cmd = adapter.build_command("/tmp/work", "hello")
+        assert cmd[0] == "opencode"
+        assert cmd[1] == "run"
         assert "--model" in cmd
         assert "claude-3" in cmd
+        assert "hello" in cmd
 
     def test_supports_model(self) -> None:
         adapter = OpenCodeAdapter()
@@ -90,13 +93,16 @@ class TestCodeBuddyAdapter:
     def test_build_command_no_model(self) -> None:
         adapter = CodeBuddyAdapter()
         cmd = adapter.build_command("/tmp/work", "hello")
-        assert cmd == ["codebuddy", "--non-interactive"]
+        assert cmd == ["codebuddy", "-p", "hello"]
 
     def test_build_command_with_model(self) -> None:
         adapter = CodeBuddyAdapter(model="gpt-4")
         cmd = adapter.build_command("/tmp/work", "hello")
+        assert cmd[0] == "codebuddy"
+        assert "-p" in cmd
         assert "--model" in cmd
         assert "gpt-4" in cmd
+        assert "hello" in cmd
 
 
 class TestGenericCommandAdapter:
