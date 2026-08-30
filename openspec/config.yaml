@@ -1,0 +1,44 @@
+schema: spec-driven
+
+context: |
+  Sisyphusfy is an open-source, project-agnostic supervisor for disposable
+  AI-agent sessions. The core must not depend on a programming language,
+  repository layout, OpenSpec, Git, a specific agent CLI, or a model provider.
+  Agent CLIs, task formats, verification commands, and handoff paths are
+  adapters or configuration. Fresh sessions and compact file-based state are
+  required for token efficiency. The initial implementation is expected to be
+  Python, with subprocess isolation, timeouts, structured results, model
+  fallback, and fake-command tests.
+
+rules:
+  proposal:
+    - Keep proposals under 600 words and include a Non-goals section.
+    - Explain why the change belongs in the generic core or an adapter.
+  design:
+    - Include an Explore & Reuse section.
+    - Do not introduce assumptions about a specific project structure.
+    - Require human approval before implementation.
+  tasks:
+    - Start with a ## 1. Testing group.
+    - Implement one small, independently verifiable task at a time.
+  specs:
+    - Every requirement must include at least one #### Scenario:.
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+# Example:
+#   context: |
+#     Tech stack: TypeScript, React, Node.js
+#     We use conventional commits
+#     Domain: e-commerce platform
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
