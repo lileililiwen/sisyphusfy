@@ -588,9 +588,41 @@ _SUBCOMMAND_HANDLERS = {
 }
 
 
+def _print_top_level_help() -> None:
+    print("""usage: sisyphusfy [-h] [--json] [--dry-run] {init,run,resume,status,doctor,loop} ...
+
+Project-agnostic supervisor for disposable AI-agent sessions.
+
+subcommands:
+  init        Create project-local configuration
+  run         Run a change with automatic workflow discovery
+  resume      Continue from task and handoff files
+  status      Show project state and task progress
+  doctor      Check project configuration and prerequisites
+  loop        Run the durable iteration loop (advanced)
+
+low-level:
+  (no subcommand)  Run a single agent command (advanced)
+
+examples:
+  sisyphusfy init                          # create project config
+  sisyphusfy run my-change                 # run an OpenSpec change
+  sisyphusfy run my-change --dry-run       # preview planned actions
+  sisyphusfy resume                        # continue durable loop
+  sisyphusfy status                        # show project state
+  sisyphusfy doctor                        # check prerequisites
+  sisyphusfy -p "hello" -- echo "world"    # single agent invocation
+
+Use 'sisyphusfy <subcommand> --help' for more information on a subcommand.""")
+
+
 def main(argv: list[str] | None = None) -> None:
     if argv is None:
         argv = sys.argv[1:]
+
+    if argv and argv[0] in ("-h", "--help") and len(argv) == 1:
+        _print_top_level_help()
+        sys.exit(0)
 
     if argv and argv[0] in _SUBCOMMAND_HANDLERS:
         handler = _SUBCOMMAND_HANDLERS[argv[0]]
