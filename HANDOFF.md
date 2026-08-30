@@ -2,32 +2,38 @@
 
 ## Current goal
 
-Implement the first minimal runner for disposable AI-agent sessions.
+Implement the durable iteration loop for multi-step agent sessions.
 
 ## Current status
 
 - MIT License selected.
 - OpenSpec initialized for OpenCode and CodeBuddy workflows.
-- Change `implement-minimal-runner` has complete proposal, design, spec, and tasks artifacts.
-- Strict OpenSpec validation passed.
-- Human approval received: implementation may be performed by an external AI agent such as OpenCode or CodeBuddy.
-- Minimal runner package and tests exist under `src/` and `tests/`.
-- Current test result: `68 passed`.
-- CLI `--help`, `--` separator, `-e` env flag all working with tests.
-- `.gitignore` covers `.venv/`, caches, `__pycache__/`, `*.egg-info/`.
-- README Quick Start rewritten to match actual CLI interface.
+- Change `implement-minimal-runner` archived to `openspec/changes/archive/2026-08-30-implement-minimal-runner/`.
+- Change `implement-durable-iteration-loop` archived to `openspec/changes/archive/2026-08-30-implement-durable-iteration-loop/`.
+- Change `implement-agent-adapters-and-model-fallback` archived to `openspec/changes/archive/2026-08-30-implement-agent-adapters-and-model-fallback/`.
+- Main specs synced: `minimal-runner`, `iteration-loop`, and `agent-adapters`.
+- Durable iteration loop implemented in `src/sisyphusfy/loop.py`.
+- CLI extended with `loop` subcommand in `src/sisyphusfy/cli.py`.
+- Agent adapters implemented in `src/sisyphusfy/adapters.py`.
+- Loop features: fresh process per iteration, Markdown checkbox and external-command completion strategies, task/handoff state snapshots, verification, timeout, max-iteration, unchanged-state, and blocked stop conditions.
+- Adapter features: registry, OpenCode/CodeBuddy/Generic adapters, model-chain fallback, retryable/non-retryable failure classification.
+- JSON and human-readable loop output.
+- Current test result: `129 passed`.
+- `ruff check` passes on all source and test files.
 - `compileall` passes on all source files.
-- Wheel build succeeds (`sisyphusfy-0.1.0-py3-none-any.whl`).
-- All tasks complete. Ready to archive or commit.
+- Package installs cleanly (`pip install -e .`).
+- All tasks complete. Change validated with `openspec validate --strict`.
 
 ## Next action
 
-Ready for archive or commit. No pending work items.
+Ready for archive or commit. Pending changes: `implement-workflow-integrations`, `implement-optional-archive-commit-hooks`.
 
 ## Verification gates
 
 ```bash
-openspec validate implement-minimal-runner --strict
+openspec validate implement-agent-adapters-and-model-fallback --strict
+.venv/bin/pytest tests/ -v
+.venv/bin/ruff check src/sisyphusfy/ tests/
 ```
 
 Before archive, run the focused test suite twice, packaging/quality checks, and the configured verification command. Do not commit, archive, or push until those checks pass.
@@ -35,5 +41,10 @@ Before archive, run the focused test suite twice, packaging/quality checks, and 
 ## Known decisions
 
 - Fresh sessions are the default to avoid accumulating conversation-token cost.
-- Model fallback is planned after the minimal subprocess runner.
+- Model fallback is ordered configuration, not constants.
 - Permission requests and ambiguous choices must stop safely rather than receive guessed answers.
+- Loop stops with UNCHANGED_STATE when no completion strategy is configured and the agent does not modify state.
+- Completion strategy check runs before state-change check so completed work is detected immediately.
+- Verification timeout returns TIMEOUT classification (distinct from VERIFICATION_FAILED).
+- Credentials come from the environment or agent configuration and are never printed.
+- Adapter registry is extensible for custom adapters.

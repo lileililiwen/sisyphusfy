@@ -11,12 +11,12 @@
 
 ## Phase 1 — Minimal runner
 
-- [ ] Implement a CLI that runs one agent iteration.
-- [ ] Accept an arbitrary agent command and pass the prompt through stdin or a configured argument.
-- [ ] Support working directory, timeout, environment, and exit-code capture.
+- [x] Implement a CLI that runs one agent iteration.
+- [x] Accept an arbitrary agent command and pass the prompt through stdin or a configured argument.
+- [x] Support working directory, timeout, environment, and exit-code capture.
 - [ ] Read optional instruction, task, and handoff files without assuming their names.
-- [ ] Add dry-run mode.
-- [ ] Add deterministic tests with fake agent commands.
+- [x] Add dry-run mode.
+- [x] Add deterministic tests with fake agent commands.
 
 ## Phase 2 — Durable iteration loop
 
