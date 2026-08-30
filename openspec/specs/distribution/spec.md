@@ -1,6 +1,10 @@
 # Distribution Specification
 
-## ADDED Requirements
+## Purpose
+
+Publish Sisyphusfy releases with stable repository/website links, verified release artifacts, and explicit, safe installation paths across Python, npm, and POSIX/PowerShell installers.
+
+## Requirements
 
 ### Requirement: Publish stable project links
 

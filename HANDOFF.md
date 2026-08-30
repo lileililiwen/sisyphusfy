@@ -8,9 +8,13 @@ Release-ready codebase with distribution and installation support.
 
 - MIT License selected.
 - OpenSpec initialized for OpenCode and CodeBuddy workflows.
-- 9 changes archived: minimal-runner, durable-iteration-loop, agent-adapters-and-model-fallback, workflow-integrations, optional-archive-commit-hooks, audit-and-fix-agent-workflow, repair-final-workflow-safety, improve-human-friendly-cli, add-distribution-and-installers.
-- Main specs synced: `minimal-runner`, `iteration-loop`, `agent-adapters`, `workflows`, `agent-workflow`, `workflow-safety`, `human-cli`, `distribution`.
+- 10 changes archived: minimal-runner, durable-iteration-loop, agent-adapters-and-model-fallback, workflow-integrations, optional-archive-commit-hooks, audit-and-fix-agent-workflow, repair-final-workflow-safety, improve-human-friendly-cli, add-distribution-and-installers, repair-distribution-release-gates.
+- Main specs synced: `minimal-runner`, `iteration-loop`, `agent-adapters`, `workflows`, `agent-workflow`, `workflow-safety`, `human-cli`, `distribution`, `distribution-quality`.
 - All main specs use canonical `## Purpose` / `## Requirements` format.
+- `distribution` main spec normalized to canonical `## Purpose` / `## Requirements` (removed change-delta `## ADDED Requirements` header) while preserving all five requirements and scenarios.
+- New `distribution-quality` main spec records the ongoing release-gate requirements: canonical distribution main spec, archive-safe documentation tests, and honest PowerShell verification reporting.
+- Documentation link tests read stable README and the canonical `distribution` main spec instead of an active change directory, so they keep passing after a change is archived.
+- PowerShell installer verification runs syntax + fixture checks when a supported PowerShell runtime is available and skips explicitly (never silently passes) when none is present; `release.yml` adds a `verify-powershell-syntax` job that distinguishes an unavailable runtime from a script failure.
 - Durable iteration loop in `src/sisyphusfy/loop.py` with dry-run propagation through agent, verification, and hook boundaries.
 - CLI `loop` subcommand in `src/sisyphusfy/cli.py`.
 - Agent adapters in `src/sisyphusfy/adapters.py` with fresh command construction per fallback model.
@@ -27,7 +31,7 @@ Release-ready codebase with distribution and installation support.
 - PowerShell installer (`install.ps1`) for Windows with TLS 1.2 and checksum verification.
 - GitHub Actions release CI in `.github/workflows/release.yml` for multi-platform artifact builds and checksums.
 - GitHub Pages deployment documentation in `docs/deployment.md`.
-- 419 tests across 29 test files; `ruff check` clean; `compileall` clean; `openspec validate --all --strict` passes.
+- 367 tests across 30 test files; `ruff check` clean; `compileall` clean; `openspec validate --all --strict` passes.
 - Package builds cleanly.
 
 ## Next action

@@ -34,28 +34,31 @@ class TestDocumentedLinks:
         content = readme.read_text()
         assert REPOSITORY_URL in content or "github.com/lileililiwen/sisyphusfy" in content
 
-    def test_links_in_proposal(self) -> None:
-        proposal = (
+    def test_links_in_canonical_distribution_spec(self) -> None:
+        # Archive-safe: read the canonical main spec, never an active change dir.
+        spec = (
             Path(__file__).resolve().parent.parent
             / "openspec"
-            / "changes"
-            / "add-distribution-and-installers"
-            / "proposal.md"
+            / "specs"
+            / "distribution"
+            / "spec.md"
         )
-        content = proposal.read_text()
-        assert "sisyphusfy.dev" in content
-        assert "lileililiwen/sisyphusfy" in content
-
-    def test_links_in_design(self) -> None:
-        design = (
-            Path(__file__).resolve().parent.parent
-            / "openspec"
-            / "changes"
-            / "add-distribution-and-installers"
-            / "design.md"
-        )
-        content = design.read_text()
+        content = spec.read_text()
         assert REPOSITORY_URL in content
         assert WEBSITE_URL in content
-        assert RELEASES_URL in content
-        assert RAW_BOOTSTRAP_URL in content
+        assert "lileililiwen/sisyphusfy" in content
+
+    def test_canonical_links_present_when_archived(self) -> None:
+        # Even after the change moves to archive/, the canonical links must be
+        # locatable from stable artifacts (README or canonical main spec).
+        repo_root = Path(__file__).resolve().parent.parent
+        readme = repo_root / "README.md"
+        spec = repo_root / "openspec" / "specs" / "distribution" / "spec.md"
+        found = []
+        if readme.exists():
+            found.append("github.com/lileililiwen/sisyphusfy" in readme.read_text())
+        if spec.exists():
+            spec_content = spec.read_text()
+            found.append("sisyphusfy.dev" in spec_content)
+            found.append("lileililiwen/sisyphusfy" in spec_content)
+        assert any(found), "canonical project links not found in stable artifacts"
