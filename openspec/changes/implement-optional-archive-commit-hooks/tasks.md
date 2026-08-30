@@ -2,23 +2,23 @@
 
 ## 1. Testing
 
-- [ ] Test disabled hooks do not invoke external commands.
-- [ ] Test dry-run hook output and no workspace mutation.
-- [ ] Test explicit file allowlist staging with unrelated files present.
-- [ ] Test archive success and failure.
-- [ ] Test commit success, failure, and later-hook suppression.
+- [x] Test disabled hooks do not invoke external commands.
+- [x] Test dry-run hook output and no workspace mutation.
+- [x] Test explicit file allowlist staging with unrelated files present.
+- [x] Test archive success and failure.
+- [x] Test commit success, failure, and later-hook suppression.
 
 ## 2. Implementation
 
-- [ ] Define hook configuration and structured results.
-- [ ] Implement dry-run and confirmation policy.
-- [ ] Implement OpenSpec archive hook.
-- [ ] Implement allowlisted Git commit hook.
-- [ ] Implement completion pipeline and failure stop behavior.
-- [ ] Document security and non-Git usage.
+- [x] Define hook configuration and structured results.
+- [x] Implement dry-run and confirmation policy.
+- [x] Implement OpenSpec archive hook.
+- [x] Implement allowlisted Git commit hook.
+- [x] Implement completion pipeline and failure stop behavior.
+- [x] Document security and non-Git usage.
 
 ## 3. Verification
 
-- [ ] Run focused tests twice.
-- [ ] Run lint, compile, and package checks.
-- [ ] Validate with strict OpenSpec validation.
+- [x] Run focused tests twice.
+- [x] Run lint, compile, and package checks.
+- [x] Validate with strict OpenSpec validation.

@@ -18,7 +18,9 @@ Implement the durable iteration loop for multi-step agent sessions.
 - Loop features: fresh process per iteration, Markdown checkbox and external-command completion strategies, task/handoff state snapshots, verification, timeout, max-iteration, unchanged-state, and blocked stop conditions.
 - Adapter features: registry, OpenCode/CodeBuddy/Generic adapters, model-chain fallback, retryable/non-retryable failure classification.
 - JSON and human-readable loop output.
-- Current test result: `129 passed`.
+- Optional completion hooks for OpenSpec archive and Git commit implemented in `src/sisyphusfy/hooks.py`.
+- Hook features: disabled by default, dry-run support, explicit file allowlist, structured results, failure stops pipeline.
+- Current test result: `141 passed`.
 - `ruff check` passes on all source and test files.
 - `compileall` passes on all source files.
 - Package installs cleanly (`pip install -e .`).
@@ -26,7 +28,7 @@ Implement the durable iteration loop for multi-step agent sessions.
 
 ## Next action
 
-Ready for archive or commit. Pending changes: `implement-workflow-integrations`, `implement-optional-archive-commit-hooks`.
+Ready for archive or commit. Pending changes: `implement-workflow-integrations`.
 
 ## Verification gates
 

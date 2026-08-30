@@ -103,6 +103,27 @@ def build_loop_parser() -> argparse.ArgumentParser:
         help="Ordered list of models for fallback",
     )
     parser.add_argument(
+        "--archive-command",
+        nargs="*",
+        default=None,
+        help="Command to run for OpenSpec archive hook",
+    )
+    parser.add_argument(
+        "--commit-command",
+        nargs="*",
+        default=None,
+        help="Command to run for Git commit hook",
+    )
+    parser.add_argument(
+        "--commit-allowed-files",
+        nargs="*",
+        default=None,
+        help="Files allowed for Git commit staging",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print hook commands without executing"
+    )
+    parser.add_argument(
         "--json", dest="output_json", action="store_true", help="Output structured JSON"
     )
     return parser
@@ -204,6 +225,7 @@ def _run_single(argv: list[str] | None) -> None:
 
 def _run_loop(argv: list[str] | None) -> None:
     from sisyphusfy.adapters import AdapterConfig
+    from sisyphusfy.hooks import HookConfig, HookType
     from sisyphusfy.loop import (
         ExternalCommandCompletion,
         LoopConfig,
@@ -252,6 +274,27 @@ def _run_loop(argv: list[str] | None) -> None:
             command=command,
         )
 
+    completion_hooks = []
+    if args.archive_command:
+        completion_hooks.append(
+            HookConfig(
+                hook_type=HookType.ARCHIVE,
+                command=args.archive_command,
+                working_directory=args.working_directory,
+                enabled=True,
+            )
+        )
+    if args.commit_command:
+        completion_hooks.append(
+            HookConfig(
+                hook_type=HookType.COMMIT,
+                command=args.commit_command,
+                working_directory=args.working_directory,
+                allowed_files=args.commit_allowed_files or [],
+                enabled=True,
+            )
+        )
+
     config = LoopConfig(
         agent_command=command,
         working_directory=args.working_directory,
@@ -265,6 +308,8 @@ def _run_loop(argv: list[str] | None) -> None:
         completion_strategy=completion_strategy,
         adapter_config=adapter_config,
         model_chain=args.model_chain or [],
+        completion_hooks=completion_hooks,
+        dry_run=args.dry_run,
     )
 
     result = run_loop(config)
@@ -280,6 +325,9 @@ def _run_loop(argv: list[str] | None) -> None:
             print(f"  Last agent: [{status}] ({last.result.duration_ms:.0f}ms)")
         if result.adapter_error:
             print(f"  Adapter error: {result.adapter_error}")
+        if result.completion_pipeline_result:
+            for hook in result.completion_pipeline_result.hooks:
+                print(f"  Hook {hook.hook_type.value}: {hook.status.value}")
 
     sys.exit(0 if result.stop_reason.value == "complete" else 1)
 

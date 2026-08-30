@@ -16,6 +16,11 @@ from sisyphusfy.adapters import (
     resolve_adapter,
     try_fallback,
 )
+from sisyphusfy.hooks import (
+    CompletionPipelineResult,
+    HookConfig,
+    run_completion_pipeline,
+)
 from sisyphusfy.runner import run_agent
 
 
@@ -81,6 +86,8 @@ class LoopConfig:
     completion_strategy: CompletionStrategy | None = None
     adapter_config: AdapterConfig | None = None
     model_chain: list[str] = field(default_factory=list)
+    completion_hooks: list[HookConfig] = field(default_factory=list)
+    dry_run: bool = False
 
 
 @dataclass
@@ -99,6 +106,7 @@ class LoopResult:
     final_handoff_path: str | None = None
     model_attempts: list[str] = field(default_factory=list)
     adapter_error: str | None = None
+    completion_pipeline_result: CompletionPipelineResult | None = None
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -118,6 +126,8 @@ class LoopResult:
             d["model_attempts"] = self.model_attempts
         if self.adapter_error:
             d["adapter_error"] = self.adapter_error
+        if self.completion_pipeline_result:
+            d["completion_pipeline_result"] = self.completion_pipeline_result.to_dict()
         return d
 
 
@@ -200,11 +210,15 @@ def run_loop(config: LoopConfig) -> LoopResult:
             )
 
     if config.completion_strategy and not config.completion_strategy.has_work(task_path):
+        pipeline_result = None
+        if config.completion_hooks:
+            pipeline_result = run_completion_pipeline(config.completion_hooks, dry_run=config.dry_run)
         return LoopResult(
             stop_reason=LoopStopReason.COMPLETE,
             iterations=0,
             final_task_path=task_path,
             final_handoff_path=handoff_path,
+            completion_pipeline_result=pipeline_result,
         )
 
     run_records: list[RunRecord] = []
@@ -278,6 +292,9 @@ def run_loop(config: LoopConfig) -> LoopResult:
             )
 
         if config.completion_strategy and not config.completion_strategy.has_work(task_path):
+            pipeline_result = None
+            if config.completion_hooks:
+                pipeline_result = run_completion_pipeline(config.completion_hooks, dry_run=config.dry_run)
             return LoopResult(
                 stop_reason=LoopStopReason.COMPLETE,
                 iterations=i,
@@ -285,6 +302,7 @@ def run_loop(config: LoopConfig) -> LoopResult:
                 final_task_path=task_path,
                 final_handoff_path=handoff_path,
                 model_attempts=all_model_attempts,
+                completion_pipeline_result=pipeline_result,
             )
 
         if config.verification_command:
