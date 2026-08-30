@@ -1,0 +1,139 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build-artifacts:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - platform: linux
+            arch: x86_64
+            os: ubuntu-latest
+          - platform: linux
+            arch: aarch64
+            os: ubuntu-latest
+          - platform: darwin
+            arch: x86_64
+            os: macos-latest
+          - platform: darwin
+            arch: aarch64
+            os: macos-latest
+          - platform: win32
+            arch: x86_64
+            os: windows-latest
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build package
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+          python -m build --sdist --wheel
+
+      - name: Create artifact archive
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARCHIVE="sisyphusfy-${VERSION}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+          tar czf "$ARCHIVE" -C dist .
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sisyphusfy-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ env.ARCHIVE }}
+
+  publish-release:
+    needs: build-artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate checksums
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd artifacts
+          find . -name "*.tar.gz" -exec sha256sum {} \; | sed 's|.*/||' > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/SHA256SUMS.txt
+
+  test-installers:
+    needs: publish-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test POSIX installer (dry-run)
+        run: |
+          chmod +x install.sh
+          ./install.sh --dry-run
+
+      - name: Test npm launcher (dry-run)
+        run: |
+          cd npm
+          npm install
+          node -e "
+          const { getPlatform, getArtifactName, getDownloadUrl } = require('./lib/launcher.js');
+          const p = getPlatform();
+          const name = getArtifactName('0.1.0', p.platform, p.arch);
+          const url = getDownloadUrl('0.1.0', name);
+          console.log('Platform:', p);
+          console.log('Artifact:', name);
+          console.log('URL:', url);
+          "
+
+  test-powershell:
+    needs: publish-release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test PowerShell installer (dry-run)
+        run: |
+          .\install.ps1 -DryRun
+
+  verify-links:
+    needs: publish-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify repository link
+        run: |
+          curl -fsSL -o /dev/null "https://github.com/lileililiwen/sisyphusfy"
+
+      - name: Verify releases link
+        run: |
+          curl -fsSL -o /dev/null "https://github.com/lileililiwen/sisyphusfy/releases"
+
+      - name: Verify website link
+        run: |
+          curl -fsSL -o /dev/null "https://sisyphusfy.dev/" || echo "Website not configured yet"

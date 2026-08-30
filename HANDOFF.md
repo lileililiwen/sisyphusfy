@@ -2,14 +2,14 @@
 
 ## Current goal
 
-Release-ready codebase with passing quality gates.
+Release-ready codebase with distribution and installation support.
 
 ## Current status
 
 - MIT License selected.
 - OpenSpec initialized for OpenCode and CodeBuddy workflows.
-- 8 changes archived: minimal-runner, durable-iteration-loop, agent-adapters-and-model-fallback, workflow-integrations, optional-archive-commit-hooks, audit-and-fix-agent-workflow, repair-final-workflow-safety, improve-human-friendly-cli.
-- Main specs synced: `minimal-runner`, `iteration-loop`, `agent-adapters`, `workflows`, `agent-workflow`, `workflow-safety`, `human-cli`.
+- 9 changes archived: minimal-runner, durable-iteration-loop, agent-adapters-and-model-fallback, workflow-integrations, optional-archive-commit-hooks, audit-and-fix-agent-workflow, repair-final-workflow-safety, improve-human-friendly-cli, add-distribution-and-installers.
+- Main specs synced: `minimal-runner`, `iteration-loop`, `agent-adapters`, `workflows`, `agent-workflow`, `workflow-safety`, `human-cli`, `distribution`.
 - All main specs use canonical `## Purpose` / `## Requirements` format.
 - Durable iteration loop in `src/sisyphusfy/loop.py` with dry-run propagation through agent, verification, and hook boundaries.
 - CLI `loop` subcommand in `src/sisyphusfy/cli.py`.
@@ -21,7 +21,13 @@ Release-ready codebase with passing quality gates.
 - Project configuration in `.sisyphusfy.toml` with precedence: CLI > project > user defaults > built-in.
 - Automatic OpenSpec change discovery, task/handoff file detection, and verification command auto-detection.
 - Human-readable progress, fallback, blocker, and next-action output with JSON compatibility.
-- 297 tests across 23 test files; `ruff check` clean; `compileall` clean; `openspec validate --all --strict` passes.
+- Distribution module in `src/sisyphusfy/distribution.py` with release metadata, checksum generation, and artifact management.
+- npm launcher package in `npm/` for cross-platform installation without Python.
+- POSIX shell installer (`install.sh`) with version override and dry-run support.
+- PowerShell installer (`install.ps1`) for Windows with TLS 1.2 and checksum verification.
+- GitHub Actions release CI in `.github/workflows/release.yml` for multi-platform artifact builds and checksums.
+- GitHub Pages deployment documentation in `docs/deployment.md`.
+- 419 tests across 29 test files; `ruff check` clean; `compileall` clean; `openspec validate --all --strict` passes.
 - Package builds cleanly.
 
 ## Next action
@@ -54,3 +60,6 @@ openspec validate --all --strict
 - Dry-run mode skips all subprocess execution: agent, verification, workflow, archive, commit.
 - Adapter registry is extensible for custom adapters.
 - Credentials come from the environment or agent configuration and are never printed.
+- Distribution artifacts use SHA-256 checksums and HTTPS-only downloads.
+- Installers default to user-writable directories; root installation is explicit.
+- npm launcher downloads platform-specific releases without reimplementing Python runner logic.

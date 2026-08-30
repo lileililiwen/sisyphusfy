@@ -1,0 +1,27 @@
+{
+  "name": "sisyphusfy",
+  "version": "0.1.0",
+  "description": "Cross-platform launcher for Sisyphusfy",
+  "bin": {
+    "sisyphusfy": "bin/sisyphusfy.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "runner",
+    "sisyphusfy"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lileililiwen/sisyphusfy"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

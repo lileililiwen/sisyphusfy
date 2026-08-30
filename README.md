@@ -26,7 +26,37 @@ AI coding sessions become expensive and fragile when conversation history grows 
 
 ## Installation
 
-From a checkout:
+**Repository**: https://github.com/lileililiwen/sisyphusfy
+**Website**: https://sisyphusfy.dev/
+**Releases**: https://github.com/lileililiwen/sisyphusfy/releases
+
+### pip / pipx
+
+```bash
+pip install sisyphusfy
+# or
+pipx install sisyphusfy
+```
+
+### npm
+
+```bash
+npm install -g sisyphusfy
+```
+
+### POSIX installer
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lileililiwen/sisyphusfy/main/install.sh | sh
+```
+
+### PowerShell installer (Windows)
+
+```powershell
+irm https://raw.githubusercontent.com/lileililiwen/sisyphusfy/main/install.ps1 | iex
+```
+
+### From a checkout
 
 ```bash
 pip install -e .
