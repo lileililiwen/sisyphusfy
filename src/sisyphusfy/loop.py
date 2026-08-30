@@ -22,6 +22,12 @@ from sisyphusfy.hooks import (
     run_completion_pipeline,
 )
 from sisyphusfy.runner import run_agent
+from sisyphusfy.workflows import (
+    WorkflowAdapter,
+    WorkflowConfig,
+    WorkflowError,
+    resolve_workflow_adapter,
+)
 
 
 class LoopStopReason(str, Enum):
@@ -88,6 +94,8 @@ class LoopConfig:
     model_chain: list[str] = field(default_factory=list)
     completion_hooks: list[HookConfig] = field(default_factory=list)
     dry_run: bool = False
+    workflow_adapter: WorkflowAdapter | None = None
+    workflow_config: WorkflowConfig | None = None
 
 
 @dataclass
@@ -209,7 +217,32 @@ def run_loop(config: LoopConfig) -> LoopResult:
                 adapter_error=str(exc),
             )
 
+    workflow_adapter = config.workflow_adapter
+    if workflow_adapter is None and config.workflow_config is not None:
+        try:
+            workflow_adapter = resolve_workflow_adapter(config.workflow_config)
+        except WorkflowError as exc:
+            return LoopResult(
+                stop_reason=LoopStopReason.ADAPTER_ERROR,
+                iterations=0,
+                final_task_path=task_path,
+                final_handoff_path=handoff_path,
+                adapter_error=f"workflow adapter error: {exc}",
+            )
+
     if config.completion_strategy and not config.completion_strategy.has_work(task_path):
+        pipeline_result = None
+        if config.completion_hooks:
+            pipeline_result = run_completion_pipeline(config.completion_hooks, dry_run=config.dry_run)
+        return LoopResult(
+            stop_reason=LoopStopReason.COMPLETE,
+            iterations=0,
+            final_task_path=task_path,
+            final_handoff_path=handoff_path,
+            completion_pipeline_result=pipeline_result,
+        )
+
+    if workflow_adapter is not None and not workflow_adapter.has_work():
         pipeline_result = None
         if config.completion_hooks:
             pipeline_result = run_completion_pipeline(config.completion_hooks, dry_run=config.dry_run)
@@ -292,6 +325,20 @@ def run_loop(config: LoopConfig) -> LoopResult:
             )
 
         if config.completion_strategy and not config.completion_strategy.has_work(task_path):
+            pipeline_result = None
+            if config.completion_hooks:
+                pipeline_result = run_completion_pipeline(config.completion_hooks, dry_run=config.dry_run)
+            return LoopResult(
+                stop_reason=LoopStopReason.COMPLETE,
+                iterations=i,
+                run_records=run_records,
+                final_task_path=task_path,
+                final_handoff_path=handoff_path,
+                model_attempts=all_model_attempts,
+                completion_pipeline_result=pipeline_result,
+            )
+
+        if workflow_adapter is not None and not workflow_adapter.has_work():
             pipeline_result = None
             if config.completion_hooks:
                 pipeline_result = run_completion_pipeline(config.completion_hooks, dry_run=config.dry_run)

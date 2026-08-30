@@ -121,6 +121,50 @@ def build_loop_parser() -> argparse.ArgumentParser:
         help="Files allowed for Git commit staging",
     )
     parser.add_argument(
+        "--workflow-type",
+        choices=["markdown", "json", "external", "openspec"],
+        default=None,
+        help="Workflow adapter type",
+    )
+    parser.add_argument(
+        "--workflow-task-path",
+        default=None,
+        help="Task path for workflow adapter",
+    )
+    parser.add_argument(
+        "--workflow-state-path",
+        default=None,
+        help="State path for JSON workflow adapter",
+    )
+    parser.add_argument(
+        "--workflow-predicate",
+        default=None,
+        help="Predicate for JSON workflow adapter",
+    )
+    parser.add_argument(
+        "--workflow-check-command",
+        nargs="*",
+        default=None,
+        help="Check command for external workflow adapter",
+    )
+    parser.add_argument(
+        "--workflow-change-dir",
+        default=None,
+        help="Change directory for OpenSpec workflow adapter",
+    )
+    parser.add_argument(
+        "--workflow-validation-command",
+        nargs="*",
+        default=None,
+        help="Validation command for OpenSpec workflow adapter",
+    )
+    parser.add_argument(
+        "--workflow-timeout",
+        type=float,
+        default=30.0,
+        help="Timeout for workflow adapter commands",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true", help="Print hook commands without executing"
     )
     parser.add_argument(
@@ -232,6 +276,7 @@ def _run_loop(argv: list[str] | None) -> None:
         MarkdownCheckboxCompletion,
         run_loop,
     )
+    from sisyphusfy.workflows import WorkflowConfig
 
     if argv is None:
         argv = sys.argv[1:]
@@ -295,6 +340,19 @@ def _run_loop(argv: list[str] | None) -> None:
             )
         )
 
+    workflow_config = None
+    if args.workflow_type:
+        workflow_config = WorkflowConfig(
+            adapter_type=args.workflow_type,
+            task_path=args.workflow_task_path or args.task_path,
+            state_path=args.workflow_state_path or "",
+            predicate=args.workflow_predicate or "",
+            check_command=args.workflow_check_command or [],
+            change_dir=args.workflow_change_dir or "",
+            validation_command=args.workflow_validation_command or [],
+            timeout=args.workflow_timeout,
+        )
+
     config = LoopConfig(
         agent_command=command,
         working_directory=args.working_directory,
@@ -310,6 +368,7 @@ def _run_loop(argv: list[str] | None) -> None:
         model_chain=args.model_chain or [],
         completion_hooks=completion_hooks,
         dry_run=args.dry_run,
+        workflow_config=workflow_config,
     )
 
     result = run_loop(config)
