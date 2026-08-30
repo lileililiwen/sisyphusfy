@@ -14,7 +14,7 @@ Release-ready codebase with distribution and installation support.
 - `distribution` main spec normalized to canonical `## Purpose` / `## Requirements` (removed change-delta `## ADDED Requirements` header) while preserving all five requirements and scenarios.
 - New `distribution-quality` main spec records the ongoing release-gate requirements: canonical distribution main spec, archive-safe documentation tests, and honest PowerShell verification reporting.
 - Documentation link tests read stable README and the canonical `distribution` main spec instead of an active change directory, so they keep passing after a change is archived.
-- PowerShell installer verification runs syntax + fixture checks when a supported PowerShell runtime is available and skips explicitly (never silently passes) when none is present; `release.yml` adds a `verify-powershell-syntax` job that distinguishes an unavailable runtime from a script failure.
+- PowerShell installer verification runs syntax + fixture checks when a supported PowerShell runtime is available and skips explicitly (never silently passes) when none is present. Runtime detection probes that the binary actually executes (not just `shutil.which` presence) so a non-executable wrapper such as a broken Snap stub is reported as unavailable rather than producing a false failure. `release.yml` adds a `verify-powershell-syntax` job that distinguishes an unavailable (or non-executable) runtime from a script failure.
 - Durable iteration loop in `src/sisyphusfy/loop.py` with dry-run propagation through agent, verification, and hook boundaries.
 - CLI `loop` subcommand in `src/sisyphusfy/cli.py`.
 - Agent adapters in `src/sisyphusfy/adapters.py` with fresh command construction per fallback model.
@@ -30,13 +30,15 @@ Release-ready codebase with distribution and installation support.
 - POSIX shell installer (`install.sh`) with version override and dry-run support.
 - PowerShell installer (`install.ps1`) for Windows with TLS 1.2 and checksum verification.
 - GitHub Actions release CI in `.github/workflows/release.yml` for multi-platform artifact builds and checksums.
+- **Release artifacts are real executables.** `build-artifacts` builds a single-file `sisyphusfy` (or `sisyphusfy.exe` on Windows) with PyInstaller from `src/sisyphusfy/cli.py` and packages only that binary into `sisyphusfy-<version>-<platform>-<arch>.tar.gz`. This matches the installer contract (extract to `~/.sisyphusfy/bin` and exec the binary) instead of the previous behavior that tarred the `dist/` wheel/sdist, which contained no runnable command.
+- **Known release limitation:** the `linux/aarch64` matrix entry still builds on `ubuntu-latest` (x86_64), so its tarball currently ships an x86_64 binary mislabeled aarch64. Cross-arch builds (qemu/emulation or arm runners) are not yet wired up; aarch64 users should use the x86_64 artifact or `pip install sisyphusfy` for now.
 - GitHub Pages deployment documentation in `docs/deployment.md`.
-- 367 tests across 30 test files; `ruff check` clean; `compileall` clean; `openspec validate --all --strict` passes.
+- 367 tests across 30 test files (local run with a working PowerShell runtime); `ruff check` clean; `compileall` clean; `openspec validate --all --strict` passes. The PowerShell installer syntax check runs when a runnable PowerShell runtime is present and is reported as skipped (not passed, not failed) when none is available, so the count is 367 passed on this host and 366 passed + 1 skipped on a host without a usable runtime.
 - Package builds cleanly.
 
 ## Next action
 
-All tasks complete. Ready for release or further feature work.
+Release gate repaired: distribution main spec is canonical, documentation link tests are archive-safe, PowerShell verification reports honestly, and release artifacts are now real executables that match the installer contract. Not yet marked release-ready: a GitHub Release must be produced by CI (PyInstaller builds + checksum publishing) and the `linux/aarch64` cross-build limitation should be resolved before publishing that specific artifact.
 
 ## Verification gates
 

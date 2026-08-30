@@ -17,9 +17,24 @@ INSTALL_PS1 = Path(__file__).resolve().parent.parent / "install.ps1"
 
 
 def _find_powershell() -> str | None:
-    """Return the PowerShell executable name if a supported runtime exists."""
+    """Return a supported PowerShell executable if one actually runs.
+
+    `shutil.which` alone is insufficient: a non-executable wrapper (e.g. a
+    broken Snap stub) can appear on PATH while failing at runtime. We probe a
+    trivial command so an unusable runtime is reported as unavailable rather
+    than producing a false failure.
+    """
     for candidate in ("pwsh", "powershell"):
-        if shutil.which(candidate):
+        if not shutil.which(candidate):
+            continue
+        probe = subprocess.run(
+            [candidate, "-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSVersion.Major"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if probe.returncode == 0:
             return candidate
     return None
 
@@ -84,7 +99,7 @@ class TestPowerShellRuntimeVerification:
     def test_syntax_check_when_available(self) -> None:
         pwsh = _find_powershell()
         if pwsh is None:
-            pytest.skip("PowerShell runtime not available on this host")
+            pytest.skip("PowerShell runtime not available or not executable on this host")
 
         result = subprocess.run(
             [

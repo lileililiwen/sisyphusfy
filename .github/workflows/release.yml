@@ -12,7 +12,6 @@ permissions:
 
 jobs:
   build-artifacts:
-    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
@@ -40,18 +39,22 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Build package
+      - name: Install build tools
         run: |
           python -m pip install --upgrade pip
-          pip install build
-          python -m build --sdist --wheel
+          pip install build pyinstaller
 
-      - name: Create artifact archive
+      - name: Build package (sdist/wheel for PyPI)
+        run: python -m build --sdist --wheel
+
+      - name: Build executable
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          python -m PyInstaller --onefile --name sisyphusfy --paths src src/sisyphusfy/cli.py --distpath pyinstaller_dist
+          if [ "${{ matrix.platform }}" = "win32" ]; then EXT=".exe"; else EXT=""; fi
           ARCHIVE="sisyphusfy-${VERSION}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
-          tar czf "$ARCHIVE" -C dist .
+          tar czf "$ARCHIVE" -C pyinstaller_dist "sisyphusfy${EXT}"
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Upload artifact
@@ -129,11 +132,19 @@ jobs:
       - name: Verify PowerShell installer syntax (skip if unavailable)
         shell: bash
         run: |
-          if command -v pwsh >/dev/null 2>&1 || command -v powershell >/dev/null 2>&1; then
-            bin="${PWSH:-${POWERSHELL:-pwsh}}"
+          bin=""
+          for c in pwsh powershell; do
+            if command -v "$c" >/dev/null 2>&1; then
+              if "$c" -NoProfile -NonInteractive -Command '"ok"' >/dev/null 2>&1; then
+                bin="$c"
+                break
+              fi
+            fi
+          done
+          if [ -n "$bin" ]; then
             "$bin" -NoProfile -NonInteractive -Command "\$errors=\$null; [System.Management.Automation.Language.Parser]::ParseFile('install.ps1', [ref]\$null, [ref]\$errors); if (\$errors.Count -gt 0) { Write-Error (\$errors | Out-String); exit 1 }"
           else
-            echo "SKIP: PowerShell runtime not available on this runner; installer syntax check skipped"
+            echo "SKIP: PowerShell runtime not available or not executable on this runner; installer syntax check skipped"
           fi
 
   verify-links:
