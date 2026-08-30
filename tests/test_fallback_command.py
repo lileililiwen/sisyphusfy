@@ -6,7 +6,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-from sisyphusfy.adapters import AdapterConfig, GenericCommandAdapter, try_fallback
+from sisyphusfy.adapters import GenericCommandAdapter, ModelChainExhausted, try_fallback
 from sisyphusfy.loop import (
     LoopConfig,
     LoopStopReason,
@@ -38,7 +38,7 @@ class TestFallbackCommandCapture:
 
         try:
             try_fallback(adapter, ["model-a", "model-b", "model-c"], "/tmp", None, run_fn)
-        except Exception:
+        except ModelChainExhausted:
             pass
 
         assert captured == ["model-a", "model-b", "model-c"]

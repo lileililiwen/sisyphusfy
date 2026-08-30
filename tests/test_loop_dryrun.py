@@ -13,7 +13,6 @@ from sisyphusfy.loop import (
     MarkdownCheckboxCompletion,
     run_loop,
 )
-from sisyphusfy.runner import run_agent
 
 
 def _write_script(tmp: Path, name: str, body: str) -> list[str]:

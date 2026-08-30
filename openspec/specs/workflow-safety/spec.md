@@ -1,7 +1,7 @@
 # workflow-safety Specification
 
 ## Purpose
-TBD - created by archiving change repair-final-workflow-safety. Update Purpose after archive.
+Loop dry-run guarantees, commit path allowlists, adapter fallback freshness, and named adapter command contracts.
 ## Requirements
 ### Requirement: Keep archived main specifications valid
 
