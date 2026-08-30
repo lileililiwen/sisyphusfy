@@ -1,7 +1,7 @@
 # minimal-runner Specification
 
 ## Purpose
-TBD - created by archiving change implement-minimal-runner. Update Purpose after archive.
+Single agent invocation with process timeout, environment preservation, and dry-run.
 ## Requirements
 ### Requirement: Run one configured agent invocation
 

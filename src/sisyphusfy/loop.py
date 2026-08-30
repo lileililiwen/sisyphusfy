@@ -12,6 +12,7 @@ from sisyphusfy.adapters import (
     AdapterConfig,
     AdapterError,
     AgentAdapter,
+    FailureClass,
     ModelChainExhausted,
     resolve_adapter,
     try_fallback,
@@ -184,6 +185,7 @@ def _run_iteration(
     prompt: str,
     timeout: float,
     model: str | None = None,
+    dry_run: bool = False,
 ) -> object:
     env: dict[str, str] = {}
     if model:
@@ -193,16 +195,15 @@ def _run_iteration(
         cmd = adapter.build_command(working_directory, prompt)
         extra_args = agent_command[1:] if len(agent_command) > 1 else []
         cmd.extend(extra_args)
-        if model and adapter.supports_model(model) and "--model" not in cmd:
-                idx = None
+        if model and adapter.supports_model(model):
+            has_model_flag = any(a in ("--model", "-m") for a in cmd)
+            if not has_model_flag:
+                cmd.extend(["--model", model])
+            else:
                 for i, arg in enumerate(cmd):
                     if arg in ("--model", "-m"):
-                        idx = i
+                        cmd[i + 1] = model
                         break
-                if idx is not None:
-                    cmd[idx + 1] = model
-                else:
-                    cmd.extend(["--model", model])
     else:
         cmd = list(agent_command)
     return run_agent(
@@ -211,6 +212,7 @@ def _run_iteration(
         prompt=prompt,
         timeout=timeout,
         env=env if env else None,
+        dry_run=dry_run,
     )
 
 
@@ -287,6 +289,7 @@ def run_loop(config: LoopConfig) -> LoopResult:
                 p,
                 config.agent_timeout,
                 model=model,
+                dry_run=config.dry_run,
             )
 
         if config.model_chain:
@@ -338,11 +341,28 @@ def run_loop(config: LoopConfig) -> LoopResult:
                 model_attempts=all_model_attempts,
             )
 
+        raw_exit = getattr(result, "exit_status", None)
+        if raw_exit is not None and raw_exit != 0 and config.model_chain:
+            if adapter is not None:
+                exit_cls = adapter.classify_failure(raw_exit, getattr(result, "stderr", "") or "")
+            else:
+                exit_cls = FailureClass.NON_RETRYABLE
+            if exit_cls == FailureClass.NON_RETRYABLE:
+                return LoopResult(
+                    stop_reason=LoopStopReason.MODELS_EXHAUSTED,
+                    iterations=i,
+                    run_records=run_records,
+                    final_task_path=task_path,
+                    final_handoff_path=handoff_path,
+                    model_attempts=all_model_attempts,
+                )
+
         if config.verification_command:
             vr = run_agent(
                 config.verification_command,
                 working_directory=config.working_directory,
                 timeout=config.verification_timeout,
+                dry_run=config.dry_run,
             )
             if vr.timed_out:
                 return LoopResult(
@@ -353,7 +373,7 @@ def run_loop(config: LoopConfig) -> LoopResult:
                     final_handoff_path=handoff_path,
                     model_attempts=all_model_attempts,
                 )
-            if vr.classification.value != "success":
+            if vr.classification.value != "success" and vr.classification.value != "dry_run":
                 return LoopResult(
                     stop_reason=LoopStopReason.VERIFICATION_FAILED,
                     iterations=i,
@@ -398,6 +418,7 @@ def run_loop(config: LoopConfig) -> LoopResult:
                 config.verification_command,
                 working_directory=config.working_directory,
                 timeout=config.verification_timeout,
+                dry_run=config.dry_run,
             )
             if vr.timed_out:
                 return LoopResult(
@@ -408,7 +429,7 @@ def run_loop(config: LoopConfig) -> LoopResult:
                     final_handoff_path=handoff_path,
                     model_attempts=all_model_attempts,
                 )
-            if vr.classification.value != "success":
+            if vr.classification.value != "success" and vr.classification.value != "dry_run":
                 return LoopResult(
                     stop_reason=LoopStopReason.VERIFICATION_FAILED,
                     iterations=i,

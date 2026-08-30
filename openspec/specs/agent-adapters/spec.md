@@ -1,6 +1,9 @@
-# Agent Adapter Specification
+# agent-adapters Specification
 
-## ADDED Requirements
+## Purpose
+Agent adapter selection, ordered model fallback chain, and no conversation continuation.
+
+## Requirements
 
 ### Requirement: Select a configured agent adapter
 

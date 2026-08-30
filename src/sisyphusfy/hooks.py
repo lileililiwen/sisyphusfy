@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import glob
 import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 
 
 class HookType(str, Enum):
@@ -17,6 +19,10 @@ class HookStatus(str, Enum):
     FAILURE = "failure"
     SKIPPED = "skipped"
     DRY_RUN = "dry_run"
+
+
+class PathEscapeError(Exception):
+    pass
 
 
 @dataclass
@@ -63,6 +69,51 @@ class CompletionPipelineResult:
         }
 
 
+def _canonicalize_and_validate(
+    allowed_files: list[str],
+    working_directory: str,
+) -> list[str]:
+    """Canonicalize allowed file paths and reject escapes."""
+    cwd = Path(working_directory).resolve()
+    canonical: list[str] = []
+    for pattern in allowed_files:
+        raw = cwd / pattern
+        resolved = raw.resolve()
+        try:
+            resolved.relative_to(cwd)
+        except ValueError:
+            raise PathEscapeError(
+                f"allowed path escapes working directory: {pattern!r} "
+                f"resolves to {resolved}"
+            )
+        matched = glob.glob(str(resolved))
+        if not matched:
+            matched = glob.glob(str(raw))
+        for match in matched:
+            m = Path(match).resolve()
+            try:
+                m.relative_to(cwd)
+            except ValueError:
+                raise PathEscapeError(
+                    f"allowed path escapes working directory: {pattern!r} "
+                    f"resolves to {m}"
+                )
+            canonical.append(str(m))
+    return canonical
+
+
+def _stage_files(files: list[str], working_directory: str) -> None:
+    """Stage only the given files using git add."""
+    if not files:
+        return
+    subprocess.run(
+        ["git", "add", "--", *files],
+        cwd=working_directory,
+        capture_output=True,
+        check=False,
+    )
+
+
 def run_hook(config: HookConfig, dry_run: bool = False) -> HookResult:
     if not config.enabled:
         return HookResult(
@@ -91,6 +142,18 @@ def run_hook(config: HookConfig, dry_run: bool = False) -> HookResult:
             status=HookStatus.DRY_RUN,
             command=config.command,
         )
+
+    if config.hook_type == HookType.COMMIT:
+        try:
+            staged = _canonicalize_and_validate(config.allowed_files, config.working_directory)
+        except PathEscapeError as exc:
+            return HookResult(
+                hook_type=config.hook_type,
+                status=HookStatus.FAILURE,
+                command=config.command,
+                error=str(exc),
+            )
+        _stage_files(staged, config.working_directory)
 
     try:
         proc = subprocess.run(

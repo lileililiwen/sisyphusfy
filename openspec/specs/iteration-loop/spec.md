@@ -1,6 +1,9 @@
-# Iteration Loop Specification
+# iteration-loop Specification
 
-## ADDED Requirements
+## Purpose
+Bounded fresh iterations with durable state persistence and verification.
+
+## Requirements
 
 ### Requirement: Execute bounded fresh iterations
 

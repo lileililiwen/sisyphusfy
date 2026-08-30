@@ -1,7 +1,8 @@
 # agent-workflow Specification
 
 ## Purpose
-TBD - created by archiving change audit-and-fix-agent-workflow. Update Purpose after archive.
+Valid agent invocations, workflow state observation, verify-before-hooks, default prompt, blocked classification, and commit allowlists.
+
 ## Requirements
 ### Requirement: Build valid fresh agent invocations
 

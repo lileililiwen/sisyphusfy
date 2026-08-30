@@ -1,7 +1,7 @@
 # workflows Specification
 
 ## Purpose
-TBD - created by archiving change implement-workflow-integrations. Update Purpose after archive.
+Task-state strategies, OpenSpec adapter, and handoff bounds.
 ## Requirements
 ### Requirement: Support configurable task-state strategies
 
