@@ -31,14 +31,14 @@ class ReleaseTarget:
 # only honest when its runner produces that architecture without emulation.
 RUNNER_NATIVE_ARCH: dict[str, str] = {
     "ubuntu-latest": "x86_64",
-    "macos-13": "x86_64",
+    "macos-15-intel": "x86_64",
     "macos-14": "aarch64",
     "windows-latest": "x86_64",
 }
 
 RELEASE_TARGETS: tuple[ReleaseTarget, ...] = (
     ReleaseTarget("linux", "x86_64", "ubuntu-latest"),
-    ReleaseTarget("darwin", "x86_64", "macos-13"),
+    ReleaseTarget("darwin", "x86_64", "macos-15-intel"),
     ReleaseTarget("darwin", "aarch64", "macos-14"),
     ReleaseTarget("win32", "x86_64", "windows-latest"),
 )

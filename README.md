@@ -292,7 +292,7 @@ built on a runner whose native architecture matches the artifact label.
 | Platform | Architecture | CI runner |
 |----------|--------------|-----------|
 | linux | x86_64 | `ubuntu-latest` |
-| darwin | x86_64 | `macos-13` |
+| darwin | x86_64 | `macos-15-intel` |
 | darwin | aarch64 | `macos-14` |
 | win32 | x86_64 | `windows-latest` |
 

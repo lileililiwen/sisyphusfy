@@ -22,9 +22,11 @@ jobs:
           - platform: linux
             arch: x86_64
             os: ubuntu-latest
+          # Intel macOS builds use macos-15-intel: macos-13 was retired, and
+          # building x86_64 on an arm64 runner would mislabel the artifact.
           - platform: darwin
             arch: x86_64
-            os: macos-13
+            os: macos-15-intel
           - platform: darwin
             arch: aarch64
             os: macos-14
