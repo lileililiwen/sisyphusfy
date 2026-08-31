@@ -3,12 +3,10 @@
 ## Purpose
 
 Publish Sisyphusfy releases with stable repository/website links, verified release artifacts, and explicit, safe installation paths across Python, npm, and POSIX/PowerShell installers.
-
 ## Requirements
-
 ### Requirement: Publish stable project links
 
-Project documentation MUST identify `https://github.com/lileililiwen/sisyphusfy` as the source repository and `https://sisyphusfy.dev/` as the public website when the domain is configured.
+Project documentation MUST identify `https://github.com/lileililiwen/sisyphusfy` as the source repository and `https://about.tooosall.uk/` as the public website when the domain is configured.
 
 #### Scenario: User looks for source code
 
@@ -73,5 +71,27 @@ The project MUST document GitHub Pages/custom-domain setup separately from repos
 
 #### Scenario: Custom domain setup
 
-- **WHEN** the maintainer configures `sisyphusfy.dev`
+- **WHEN** the maintainer configures `about.tooosall.uk`
 - **THEN** documentation MUST describe repository Pages settings, DNS records, HTTPS, and domain verification
+
+### Requirement: Tagged releases publish the npm launcher
+
+The tagged release workflow MUST publish the package rooted at `npm/` to the
+public npm registry after the GitHub release is created.
+
+#### Scenario: A release tag is pushed
+
+- **WHEN** a `v*` tag passes the artifact and GitHub release jobs
+- **THEN** the npm publication job runs `npm publish --access public` from `npm/`
+- **AND** the job authenticates with npm trusted publishing using OIDC
+
+### Requirement: npm publication is tokenless
+
+The release workflow MUST NOT require or embed a long-lived npm authentication
+token for publication.
+
+#### Scenario: The workflow is inspected
+
+- **WHEN** the release workflow is loaded
+- **THEN** the npm publication job grants `id-token: write`
+- **AND** no `NPM_TOKEN` or `NODE_AUTH_TOKEN` is configured

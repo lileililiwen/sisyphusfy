@@ -32,14 +32,14 @@ Add these DNS records at your provider:
 
 ### 3. Configure Custom Domain
 
-1. In **Settings** > **Pages**, enter `sisyphusfy.dev` in the **Custom domain** field
+1. In **Settings** > **Pages**, enter `about.tooosall.uk` in the **Custom domain** field
 2. Click **Save**
 3. Wait for DNS check to complete (may take up to 24 hours)
 4. Check **Enforce HTTPS** once the certificate is issued
 
 ### 4. Verify
 
-1. Visit `https://sisyphusfy.dev/`
+1. Visit `https://about.tooosall.uk/`
 2. Confirm the site loads over HTTPS
 3. Verify the SSL certificate shows GitHub Pages
 
@@ -51,12 +51,42 @@ These URLs work regardless of custom domain configuration:
 - **Releases**: https://github.com/lileililiwen/sisyphusfy/releases
 - **Raw files**: https://raw.githubusercontent.com/lileililiwen/sisyphusfy/main/
 
+## npm Package Publication
+
+The release workflow publishes `npm/package.json` automatically when a `v*`
+tag is pushed. It uses npm trusted publishing, so no long-lived npm token is
+stored in GitHub Actions.
+
+Before the first npm release, create the package at npmjs.org or publish it
+once manually, then configure its trusted publisher:
+
+1. Sign in to [npmjs.com](https://www.npmjs.com/) with the package-owner account.
+2. Open the `sisyphusfy` package settings, or create the package by publishing
+   `npm/` once with `npm publish --access public`.
+3. Add a GitHub Actions trusted publisher with:
+   - Organization/user: `lileililiwen`
+   - Repository: `sisyphusfy`
+   - Workflow filename: `.github/workflows/release.yml`
+   - Environment: leave blank; the npm job does not use a GitHub environment
+4. Ensure the package is public and the npm account can publish it.
+
+The existing `v0.1.0` GitHub release predates npm publication. To make that
+version installable, publish `npm/` once after configuring the package. Future
+version tags will publish automatically through the workflow.
+
+Verify availability with:
+
+```bash
+npm view sisyphusfy version
+npm install -g sisyphusfy
+```
+
 ## Troubleshooting
 
 ### DNS not resolving
 
 - Wait up to 24 hours for propagation
-- Check DNS records with `dig sisyphusfy.dev`
+- Check DNS records with `dig about.tooosall.uk`
 - Verify GitHub Pages is enabled in repository settings
 
 ### Certificate not issuing

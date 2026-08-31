@@ -43,7 +43,7 @@ requires-python = ">=3.10"
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://sisyphusfy.dev/"
+Homepage = "https://about.tooosall.uk/"
 Documentation = "https://github.com/lileililiwen/sisyphusfy/tree/main/docs"
 Repository = "https://github.com/lileililiwen/sisyphusfy"
 Issues = "https://github.com/lileililiwen/sisyphusfy/issues"

@@ -4,7 +4,7 @@
 
 ### Requirement: Publish stable project links
 
-Project documentation MUST identify `https://github.com/lileililiwen/sisyphusfy` as the source repository and `https://sisyphusfy.dev/` as the public website when the domain is configured.
+Project documentation MUST identify `https://github.com/lileililiwen/sisyphusfy` as the source repository and `https://about.tooosall.uk/` as the public website when the domain is configured.
 
 #### Scenario: User looks for source code
 
@@ -69,5 +69,5 @@ The project MUST document GitHub Pages/custom-domain setup separately from repos
 
 #### Scenario: Custom domain setup
 
-- **WHEN** the maintainer configures `sisyphusfy.dev`
+- **WHEN** the maintainer configures `about.tooosall.uk`
 - **THEN** documentation MUST describe repository Pages settings, DNS records, HTTPS, and domain verification

@@ -38,7 +38,8 @@ AI coding sessions become expensive and fragile when conversation history grows 
 ## Installation
 
 **Repository**: https://github.com/lileililiwen/sisyphusfy
-**Website**: https://sisyphusfy.dev/
+**Website**: https://about.tooosall.uk/
+**About**: [About Me](about.md)
 **Releases**: https://github.com/lileililiwen/sisyphusfy/releases
 
 ### pip / pipx

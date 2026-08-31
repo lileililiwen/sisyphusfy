@@ -31,7 +31,7 @@ class TestConstants:
         assert REPOSITORY_URL == "https://github.com/lileililiwen/sisyphusfy"
 
     def test_website_url(self) -> None:
-        assert WEBSITE_URL == "https://sisyphusfy.dev/"
+        assert WEBSITE_URL == "https://about.tooosall.uk/"
 
     def test_releases_url(self) -> None:
         assert RELEASES_URL == "https://github.com/lileililiwen/sisyphusfy/releases"

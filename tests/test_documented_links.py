@@ -59,6 +59,6 @@ class TestDocumentedLinks:
             found.append("github.com/lileililiwen/sisyphusfy" in readme.read_text())
         if spec.exists():
             spec_content = spec.read_text()
-            found.append("sisyphusfy.dev" in spec_content)
+            found.append("about.tooosall.uk" in spec_content)
             found.append("lileililiwen/sisyphusfy" in spec_content)
         assert any(found), "canonical project links not found in stable artifacts"

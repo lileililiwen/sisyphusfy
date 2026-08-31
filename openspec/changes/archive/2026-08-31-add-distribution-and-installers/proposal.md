@@ -2,7 +2,7 @@
 
 ## Why
 
-Sisyphusfy is intended for use across many projects and should be easy to install without requiring users to clone the repository or understand the Python development environment. The public project identity is GitHub repository `lileililiwen/sisyphusfy` with `https://sisyphusfy.dev/` as the documentation and distribution website.
+Sisyphusfy is intended for use across many projects and should be easy to install without requiring users to clone the repository or understand the Python development environment. The public project identity is GitHub repository `lileililiwen/sisyphusfy` with `https://about.tooosall.uk/` as the documentation and distribution website.
 
 ## New
 

@@ -6,6 +6,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+uv.lock
 *.egg
 # Local Sisyphusfy diagnostics created by running the tool in this repository.
 .sisyphusfy/

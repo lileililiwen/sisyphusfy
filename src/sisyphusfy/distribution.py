@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPOSITORY_URL = "https://github.com/lileililiwen/sisyphusfy"
-WEBSITE_URL = "https://sisyphusfy.dev/"
+WEBSITE_URL = "https://about.tooosall.uk/"
 RELEASES_URL = "https://github.com/lileililiwen/sisyphusfy/releases"
 RAW_BOOTSTRAP_URL = (
     "https://raw.githubusercontent.com/lileililiwen/sisyphusfy/main/install.sh"

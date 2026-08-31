@@ -7,7 +7,7 @@ Reuse the existing Python package entry point, `pyproject.toml` metadata, README
 ## Public endpoints
 
 - Repository: `https://github.com/lileililiwen/sisyphusfy`
-- Website: `https://sisyphusfy.dev/`
+- Website: `https://about.tooosall.uk/`
 - Releases: `https://github.com/lileililiwen/sisyphusfy/releases`
 - Raw bootstrap fallback: `https://raw.githubusercontent.com/lileililiwen/sisyphusfy/main/install.sh`
 

@@ -8,6 +8,9 @@ Cross-platform launcher for [Sisyphusfy](https://github.com/lileililiwen/sisyphu
 npm install -g sisyphusfy
 ```
 
+If this command reports `E404`, the package is not currently published on the
+npm public registry. Maintainers should follow the [npm publication setup](../docs/deployment.md#npm-package-publication).
+
 ## Usage
 
 ```bash
