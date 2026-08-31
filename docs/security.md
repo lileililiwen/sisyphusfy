@@ -22,6 +22,12 @@ enable them, exactly as you would review a `Makefile` target or a CI step.
 
 - **No shell.** Commands are argument lists passed to `subprocess.run` without
   `shell=True`. A configuration value cannot inject additional commands.
+- **Display quoting.** Where a command is shown (diagnostic logs, the
+  human-readable result, `doctor`, and dry-run), each argument is rendered with
+  shell-style quoting via `shlex.join`. A multi-word argument such as the default
+  agent prompt appears as one quoted token, so argument boundaries are visible and
+  the line does not look like a malformed, unquoted command. This is display-only
+  and never fed back into a process.
 - **Explicit working directory.** Every command runs in the project directory
   selected with `--project-dir`. Relative paths resolve against that directory,
   so a project cannot reach outside itself by naming a relative path.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -46,3 +47,14 @@ class RunResult:
         if self.error:
             d["error"] = self.error
         return d
+
+
+def format_command(command: list[str]) -> str:
+    """Render an argument list the way a shell would need it quoted.
+
+    A multi-word argument becomes a single quoted token, so argument boundaries
+    are visible. A list with no special characters renders unchanged, so existing
+    output does not churn. This is display-only and is never fed back to a
+    process; command execution keeps using the list directly.
+    """
+    return shlex.join(command)

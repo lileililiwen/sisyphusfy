@@ -11,7 +11,7 @@ import os
 import time
 from pathlib import Path
 
-from sisyphusfy.result import RunResult
+from sisyphusfy.result import RunResult, format_command
 
 # Log location inside the project directory: <project>/.sisyphusfy/logs/
 LOG_ROOT = ".sisyphusfy"
@@ -52,7 +52,7 @@ def bound_output(text: str, limit: int = MAX_OUTPUT_CHARS) -> tuple[str, bool]:
 
 def _render(result: RunResult) -> str:
     lines = [
-        f"command: {' '.join(result.command)}",
+        f"command: {format_command(result.command)}",
         f"working directory: {result.working_directory}",
         f"exit status: {result.exit_status}",
         f"classification: {result.classification.value}",

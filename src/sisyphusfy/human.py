@@ -21,6 +21,7 @@ from sisyphusfy.config import (
 )
 from sisyphusfy.diagnostics import read_verification_log
 from sisyphusfy.progress import StreamProgress, format_duration
+from sisyphusfy.result import format_command
 
 # How many trailing output lines a timeout report shows.
 TIMEOUT_TAIL_LINES = 5
@@ -322,9 +323,9 @@ def cmd_doctor(project_dir: str = ".", json_output: bool = False) -> int:
 def _describe_verification(verification: VerificationResolution) -> str:
     """Render the resolved verifier and how it was chosen."""
     if verification.source is VerificationSource.CONFIGURED:
-        return f"configured: {' '.join(verification.command)}"
+        return f"configured: {format_command(verification.command)}"
     if verification.source is VerificationSource.DISCOVERED:
-        return f"discovered ({verification.detector}): {' '.join(verification.command)}"
+        return f"discovered ({verification.detector}): {format_command(verification.command)}"
     detail = f" ({verification.detail})" if verification.detail else ""
     return f"none found{detail}; set verification_command"
 
@@ -584,7 +585,7 @@ def _print_timeout(result, config: SisyphusConfig) -> None:
 
 
 def _print_timeout_detail(component: str, evidence, limit: float) -> None:
-    print(f"{component} timed out after {format_duration(limit)}: {' '.join(evidence.command)}")
+    print(f"{component} timed out after {format_duration(limit)}: {format_command(evidence.command)}")
     for line in _timeout_tail(evidence):
         print(f"  {line}")
     if evidence.log_path:
@@ -633,7 +634,7 @@ def _print_verifier_status(result, outcome: str) -> None:
         print(f"verification {outcome}.")
         return
     status = "timed out" if evidence.timed_out else f"exit {evidence.exit_status}"
-    print(f"verification {outcome}: {' '.join(evidence.command)} ({status})")
+    print(f"verification {outcome}: {format_command(evidence.command)} ({status})")
     if evidence.log_path:
         print(f"  diagnostics: {evidence.log_path}")
         print("  inspect with: sisyphusfy resume --verbose")

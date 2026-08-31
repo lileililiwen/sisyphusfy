@@ -5,6 +5,7 @@ import json
 import sys
 
 from sisyphusfy.progress import StreamProgress
+from sisyphusfy.result import format_command
 from sisyphusfy.runner import run_agent
 
 HIGH_LEVEL_SUBCOMMANDS = {"init", "run", "resume", "status", "doctor"}
@@ -376,7 +377,7 @@ def _run_single(argv: list[str] | None) -> None:
         print(json.dumps(result.to_dict(), indent=2))
     else:
         if result.classification.value == "dry_run":
-            print(f"dry-run: {' '.join(result.command)}")
+            print(f"dry-run: {format_command(result.command)}")
             print(f"  working directory: {result.working_directory}")
             if result.prompt:
                 print(f"  prompt: {result.prompt}")
@@ -385,7 +386,7 @@ def _run_single(argv: list[str] | None) -> None:
                     print(f"  env: {k}={v}")
         else:
             status = "OK" if result.exit_status == 0 else f"exit {result.exit_status}"
-            print(f"[{status}] {' '.join(result.command)} ({result.duration_ms:.0f}ms)")
+            print(f"[{status}] {format_command(result.command)} ({result.duration_ms:.0f}ms)")
             if result.stdout:
                 print(result.stdout, end="")
             if result.stderr:
