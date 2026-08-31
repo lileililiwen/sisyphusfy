@@ -619,6 +619,9 @@ def _print_agent_failure(result) -> None:
         print(f"[agent] error: {detail}")
     if error is not None and error.reference:
         print(f"[agent] reference: {error.reference}")
+    if error is not None and error.hint:
+        print("[agent] this is an agent-CLI/provider error, not a sisyphusfy failure.")
+        print(f"[agent] diagnose: {error.hint}")
 
     if evidence.log_path:
         print(f"[agent] diagnostics: {evidence.log_path}")

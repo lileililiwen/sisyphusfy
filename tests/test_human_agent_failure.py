@@ -103,11 +103,12 @@ class TestAgentFailureOutput:
         data = json.loads(capsys.readouterr().out.strip())
 
         assert data["stop_reason"] == "agent_failed"
-        assert data["agent_error"] == {
-            "name": "UnknownError",
-            "message": EXPECTED_MESSAGE,
-            "reference": EXPECTED_REFERENCE,
-        }
+        error = data["agent_error"]
+        assert error["name"] == "UnknownError"
+        assert error["message"] == EXPECTED_MESSAGE
+        assert error["reference"] == EXPECTED_REFERENCE
+        # A generic provider-side error carries a diagnostic hint.
+        assert error.get("hint")
         assert data["verification"]["status"] == "skipped"
         assert Path(data["agent_evidence"]["log_path"]).exists()
 

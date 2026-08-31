@@ -753,13 +753,50 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
     )
 
 
+def _is_provider_side_error(error: AgentError | None) -> bool:
+    """Return True for a generic server/provider error, not a specific agent error.
+
+    A specific, actionable error (a clear ``RateLimitError``, a missing file,
+    etc.) must stay prominent; only a generic "server error" envelope is
+    annotated with an agent-CLI diagnostic hint.
+    """
+    if error is None:
+        return False
+    if error.name and error.name.lower() in _GENERIC_SERVER_ERRORS:
+        return True
+    message = (error.message or "").lower()
+    return any(token in message for token in _GENERIC_SERVER_ERROR_TOKENS)
+
+
+_GENERIC_SERVER_ERRORS = {"unknownerror", "servererror", "internalerror"}
+_GENERIC_SERVER_ERROR_TOKENS = (
+    "server error",
+    "server logs",
+    "check server logs",
+    "unexpected server",
+)
+
+
+def _adapter_diagnostic_hint(adapter: AgentAdapter) -> str | None:
+    """Return the adapter's diagnostic hint, tolerating adapters without one."""
+    hint = getattr(adapter, "diagnostic_hint", None)
+    if hint is None:
+        return None
+    try:
+        return hint()
+    except Exception:  # noqa: BLE001 - a third-party adapter must not stop the loop
+        return None
+
+
 def _parse_agent_error(adapter: AgentAdapter, result: object) -> AgentError | None:
     """Ask an adapter for the structured agent error, if it exposes one.
 
     Third-party adapters written against the earlier protocol have no
     `parse_error`, and an adapter that raises must not take the supervisor
     down. Either case degrades to "no structured error" while the stop reason
-    still reflects the non-zero exit status.
+    still reflects the non-zero exit status. When the recovered error is a
+    generic provider/server error, a diagnostic hint from the adapter is
+    attached so the user is pointed at their agent CLI instead of a dead end.
     """
     parse = getattr(adapter, "parse_error", None)
     if parse is None:
@@ -769,9 +806,14 @@ def _parse_agent_error(adapter: AgentAdapter, result: object) -> AgentError | No
         f"{getattr(result, 'stderr', '') or ''}"
     )
     try:
-        return parse(combined)
+        error = parse(combined)
     except Exception:  # noqa: BLE001 - a third-party parser must not stop the loop
         return None
+    if error is not None and _is_provider_side_error(error):
+        hint = _adapter_diagnostic_hint(adapter)
+        if hint:
+            error.hint = hint
+    return error
 
 
 def _make_generic(command: list[str]) -> AgentAdapter:

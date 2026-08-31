@@ -28,6 +28,10 @@ class AgentAdapter(Protocol):
 
     def parse_error(self, output: str) -> AgentError | None: ...
 
+    def diagnostic_hint(self) -> str:
+        """Return the command that diagnoses this agent CLI's failures."""
+        ...
+
 
 @dataclass
 class AdapterConfig:
@@ -51,6 +55,7 @@ class AgentError:
     name: str | None = None
     message: str | None = None
     reference: str | None = None
+    hint: str | None = None
 
     def to_dict(self) -> dict:
         d: dict = {}
@@ -60,6 +65,8 @@ class AgentError:
             d["message"] = self.message
         if self.reference:
             d["reference"] = self.reference
+        if self.hint:
+            d["hint"] = self.hint
         return d
 
 
@@ -191,6 +198,13 @@ class GenericCommandAdapter:
     def parse_error(self, output: str) -> AgentError | None:
         return parse_error_envelope(output)
 
+    def diagnostic_hint(self) -> str:
+        cmd = " ".join(self.command)
+        return (
+            f"Run the agent directly to reproduce: {cmd} 'hi'\n"
+            "Enable the agent CLI's own verbose/log flag and read its output."
+        )
+
 
 class OpenCodeAdapter:
     def __init__(self, model: str | None = None) -> None:
@@ -223,6 +237,9 @@ class OpenCodeAdapter:
     def parse_error(self, output: str) -> AgentError | None:
         return parse_error_envelope(output)
 
+    def diagnostic_hint(self) -> str:
+        return "Run: opencode run 'hi' --print-logs --log-level DEBUG"
+
 
 class CodeBuddyAdapter:
     def __init__(self, model: str | None = None) -> None:
@@ -254,6 +271,12 @@ class CodeBuddyAdapter:
 
     def parse_error(self, output: str) -> AgentError | None:
         return parse_error_envelope(output)
+
+    def diagnostic_hint(self) -> str:
+        return (
+            "Run: codebuddy 'hi' --verbose\n"
+            "Check that the CodeBuddy CLI is authenticated and the configured model resolves."
+        )
 
 
 _BUILTIN_ADAPTERS: dict[str, type] = {

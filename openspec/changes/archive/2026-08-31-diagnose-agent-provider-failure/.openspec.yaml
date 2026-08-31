@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-08-31
+goal: Make sisyphusfy turn an agent-CLI provider/config failure (e.g. opencode
+  UnknownError) into a clear, actionable diagnostic instead of an opaque
+  dead-end, for open-source users who cannot read the agent CLI's server logs.
