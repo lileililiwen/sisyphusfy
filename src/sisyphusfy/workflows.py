@@ -33,6 +33,8 @@ class WorkflowConfig:
     change_dir: str = ""
     validation_command: list[str] = field(default_factory=list)
     timeout: float = 30.0
+    working_directory: str = ""
+    dry_run: bool = False
 
     @classmethod
     def from_dict(cls, data: dict) -> WorkflowConfig:
@@ -49,6 +51,8 @@ class WorkflowConfig:
             change_dir=data.get("change_dir", ""),
             validation_command=data.get("validation_command", []),
             timeout=data.get("timeout", 30.0),
+            working_directory=data.get("working_directory", ""),
+            dry_run=bool(data.get("dry_run", False)),
         )
 
 
@@ -172,21 +176,36 @@ class JSONPredicateAdapter:
 
 
 class ExternalCommandAdapter:
-    def __init__(self, check_command: list[str], timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        check_command: list[str],
+        timeout: float = 30.0,
+        working_directory: str = ".",
+        dry_run: bool = False,
+    ) -> None:
         self._check_command = check_command
         self._timeout = timeout
+        self._working_directory = working_directory
+        self._dry_run = dry_run
         self._last_returncode: int | None = None
+
+    @property
+    def check_command(self) -> list[str]:
+        return self._check_command
 
     def has_work(self) -> bool:
         return not self.is_complete()
 
     def is_complete(self) -> bool:
+        if self._dry_run:
+            return False
         try:
             proc = subprocess.run(
                 self._check_command,
                 capture_output=True,
                 timeout=self._timeout,
                 check=False,
+                cwd=self._working_directory,
             )
             self._last_returncode = proc.returncode
             return proc.returncode == 0
@@ -208,10 +227,19 @@ class ExternalCommandAdapter:
 
 
 class OpenSpecAdapter:
-    def __init__(self, change_dir: str, validation_command: list[str], timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        change_dir: str,
+        validation_command: list[str],
+        timeout: float = 30.0,
+        working_directory: str = ".",
+        dry_run: bool = False,
+    ) -> None:
         self._change_dir = Path(change_dir)
         self._validation_command = validation_command
         self._timeout = timeout
+        self._working_directory = working_directory
+        self._dry_run = dry_run
         self._tasks_content: str | None = None
 
     def _ensure_tasks_loaded(self) -> None:
@@ -233,6 +261,10 @@ class OpenSpecAdapter:
                 unchecked += 1
         return checked, unchecked
 
+    @property
+    def validation_command(self) -> list[str]:
+        return self._validation_command
+
     def _run_validation(self) -> None:
         try:
             proc = subprocess.run(
@@ -240,6 +272,7 @@ class OpenSpecAdapter:
                 capture_output=True,
                 timeout=self._timeout,
                 check=False,
+                cwd=self._working_directory,
             )
             if proc.returncode != 0:
                 raise WorkflowError(f"validation failed with exit code {proc.returncode}")
@@ -255,6 +288,8 @@ class OpenSpecAdapter:
         _, unchecked = self._parse_tasks()
         if unchecked > 0:
             return False
+        if self._dry_run or not self._validation_command:
+            return True
         self._run_validation()
         return True
 
@@ -288,18 +323,38 @@ def render_handoff_prompt(
     return result
 
 
+def adapter_runs_commands(adapter: WorkflowAdapter) -> bool:
+    """Report whether completing evaluation would execute a subprocess.
+
+    Custom adapters can declare a ``runs_commands`` attribute instead of being
+    one of the built-in command-driven adapters.
+    """
+    if isinstance(adapter, ExternalCommandAdapter):
+        return bool(adapter.check_command)
+    if isinstance(adapter, OpenSpecAdapter):
+        return bool(adapter.validation_command)
+    return bool(getattr(adapter, "runs_commands", False))
+
+
 def resolve_workflow_adapter(config: WorkflowConfig) -> WorkflowAdapter:
     if config.adapter_type == "markdown":
         return MarkdownChecklistAdapter(task_path=config.task_path)
     elif config.adapter_type == "json":
         return JSONPredicateAdapter(state_path=config.state_path, predicate=config.predicate)
     elif config.adapter_type == "external":
-        return ExternalCommandAdapter(check_command=config.check_command, timeout=config.timeout)
+        return ExternalCommandAdapter(
+            check_command=config.check_command,
+            timeout=config.timeout,
+            working_directory=config.working_directory or ".",
+            dry_run=config.dry_run,
+        )
     elif config.adapter_type == "openspec":
         return OpenSpecAdapter(
             change_dir=config.change_dir,
             validation_command=config.validation_command,
             timeout=config.timeout,
+            working_directory=config.working_directory or ".",
+            dry_run=config.dry_run,
         )
     else:
         raise WorkflowError(f"unknown adapter type: {config.adapter_type!r}")

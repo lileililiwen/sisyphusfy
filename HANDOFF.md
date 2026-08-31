@@ -8,8 +8,8 @@ Release-ready codebase with distribution and installation support.
 
 - MIT License selected.
 - OpenSpec initialized for OpenCode and CodeBuddy workflows.
-- 10 changes archived: minimal-runner, durable-iteration-loop, agent-adapters-and-model-fallback, workflow-integrations, optional-archive-commit-hooks, audit-and-fix-agent-workflow, repair-final-workflow-safety, improve-human-friendly-cli, add-distribution-and-installers, repair-distribution-release-gates.
-- Main specs synced: `minimal-runner`, `iteration-loop`, `agent-adapters`, `workflows`, `agent-workflow`, `workflow-safety`, `human-cli`, `distribution`, `distribution-quality`.
+- 11 changes archived: minimal-runner, durable-iteration-loop, agent-adapters-and-model-fallback, workflow-integrations, optional-archive-commit-hooks, audit-and-fix-agent-workflow, repair-final-workflow-safety, improve-human-friendly-cli, add-distribution-and-installers, repair-distribution-release-gates, close-audit-identified-gaps.
+- Main specs synced: `minimal-runner`, `iteration-loop`, `agent-adapters`, `workflows`, `agent-workflow`, `workflow-safety`, `human-cli`, `distribution`, `distribution-quality`, `supervisor-quality`.
 - All main specs use canonical `## Purpose` / `## Requirements` format.
 - `distribution` main spec normalized to canonical `## Purpose` / `## Requirements` (removed change-delta `## ADDED Requirements` header) while preserving all five requirements and scenarios.
 - New `distribution-quality` main spec records the ongoing release-gate requirements: canonical distribution main spec, archive-safe documentation tests, and honest PowerShell verification reporting.
@@ -31,14 +31,19 @@ Release-ready codebase with distribution and installation support.
 - PowerShell installer (`install.ps1`) for Windows with TLS 1.2 and checksum verification.
 - GitHub Actions release CI in `.github/workflows/release.yml` for multi-platform artifact builds and checksums.
 - **Release artifacts are real executables.** `build-artifacts` builds a single-file `sisyphusfy` (or `sisyphusfy.exe` on Windows) with PyInstaller from `src/sisyphusfy/cli.py` and packages only that binary into `sisyphusfy-<version>-<platform>-<arch>.tar.gz`. This matches the installer contract (extract to `~/.sisyphusfy/bin` and exec the binary) instead of the previous behavior that tarred the `dist/` wheel/sdist, which contained no runnable command.
-- **Known release limitation:** the `linux/aarch64` matrix entry still builds on `ubuntu-latest` (x86_64), so its tarball currently ships an x86_64 binary mislabeled aarch64. Cross-arch builds (qemu/emulation or arm runners) are not yet wired up; aarch64 users should use the x86_64 artifact or `pip install sisyphusfy` for now.
+- **Release targets are a single source of truth.** `src/sisyphusfy/distribution.py` defines `RELEASE_TARGETS`, `DEFERRED_TARGETS`, and `RUNNER_NATIVE_ARCH`; release metadata, the CI matrix, `install.sh`, and the npm launcher must all agree with it. `tests/test_release_targets.py` fails when they diverge.
+- **Deferred release target:** `linux/aarch64` is no longer advertised. It was previously built on `ubuntu-latest` (x86_64) and published as an aarch64 artifact. It stays in `DEFERRED_TARGETS` until an aarch64 runner or a verified cross-compilation process exists; on that platform use `pip install sisyphusfy`. `darwin/x86_64` was moved to the Intel runner `macos-13` for the same reason.
+- **One verification per iteration.** `run_loop` runs the configured verification at most once per productive iteration and always before completion is accepted or hooks run, including when task state is already complete on entry.
+- **Dry-run executes nothing.** Low-level dry-run skips the agent, verification, external completion checks, workflow validation, and hooks. When completion cannot be evaluated without running a command, the loop stops with `dry_run` instead of claiming a completion state it did not verify.
+- **Project directory propagation.** `run`, `resume`, and `loop` resolve the project directory once and use it as the working directory for agents, verification, workflow validation, and archive/commit hooks. Relative task, handoff, workflow, and hook paths resolve against it.
+- Public contracts documented: `docs/configuration.md` (every TOML field with type, default, precedence, safety), `docs/adapters.md` (agent and workflow adapter protocols, registry, model fallback, failure classification), `docs/examples.md` (Python, Rust, JavaScript, Flutter, .NET), `docs/ci.md` (CI usage), `docs/security.md` (command-execution model and review checklist).
 - GitHub Pages deployment documentation in `docs/deployment.md`.
-- 367 tests across 30 test files (local run with a working PowerShell runtime); `ruff check` clean; `compileall` clean; `openspec validate --all --strict` passes. The PowerShell installer syntax check runs when a runnable PowerShell runtime is present and is reported as skipped (not passed, not failed) when none is available, so the count is 367 passed on this host and 366 passed + 1 skipped on a host without a usable runtime.
+- 423 tests across 36 test files; `ruff check` clean; `compileall` clean; `openspec validate --all --strict` passes. The PowerShell installer syntax check runs when a runnable PowerShell runtime is present and is reported as skipped (not passed, not failed) when none is available, so the count is 423 passed on this host and 422 passed + 1 skipped on a host without a usable runtime.
 - Package builds cleanly.
 
 ## Next action
 
-Release gate repaired: distribution main spec is canonical, documentation link tests are archive-safe, PowerShell verification reports honestly, and release artifacts are now real executables that match the installer contract. Not yet marked release-ready: a GitHub Release must be produced by CI (PyInstaller builds + checksum publishing) and the `linux/aarch64` cross-build limitation should be resolved before publishing that specific artifact.
+Audited gaps closed: dry-run is side-effect free at every boundary, verification runs once per iteration and always before hooks, the project directory reaches every subprocess, release targets no longer advertise a mislabeled binary, and the public configuration/adapter/security contracts are documented and tested. Remaining release step: produce the first GitHub Release from CI (PyInstaller builds plus checksum publishing), which also settles the `Publish the first stable release` roadmap item.
 
 ## Verification gates
 
@@ -56,16 +61,18 @@ openspec validate --all --strict
 - CodeBuddy uses `codebuddy -p` (not `--non-interactive`) for non-interactive output.
 - No continuation flags (`-c`, `-s`, `-r`) are passed to preserve fresh sessions.
 - Workflow adapters reload from disk on each observation to detect external changes.
-- Verification runs after each productive iteration but before accepting completion.
-- Completion hooks run only after both completion and verification succeed.
+- Verification runs after each productive iteration but before accepting completion; it never runs twice for the same iteration.
+- Completion hooks run only after both completion and verification succeed; an already-complete project still verifies before hooks run.
 - Default prompt directs one task, handoff update, and safe stop on blockers.
 - Blocked detection covers stdout and stderr; ordinary failures are not blocked.
 - Commit hooks require explicit `allowed_files` to prevent staging unrelated files.
 - Commit hook canonicalizes paths and rejects escapes before staging.
 - Model fallback constructs a fresh command per model; non-retryable failures stop the chain.
-- Dry-run mode skips all subprocess execution: agent, verification, workflow, archive, commit.
+- Dry-run mode skips all subprocess execution: agent, verification, workflow, archive, commit, and external completion checks. When completion needs a command, dry-run reports `dry_run` rather than a guessed state.
+- The selected project directory is the working directory of every subprocess, and relative configured paths resolve against it.
 - Adapter registry is extensible for custom adapters.
 - Credentials come from the environment or agent configuration and are never printed.
 - Distribution artifacts use SHA-256 checksums and HTTPS-only downloads.
 - Installers default to user-writable directories; root installation is explicit.
 - npm launcher downloads platform-specific releases without reimplementing Python runner logic.
+- A release target is published only when CI can build it on a runner with that native architecture; otherwise it is deferred and installers refuse it.

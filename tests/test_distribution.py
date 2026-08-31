@@ -9,7 +9,9 @@ from pathlib import Path
 from sisyphusfy.distribution import (
     ARTIFACT_TEMPLATE,
     CHECKSUM_FILENAME,
+    DEFERRED_TARGETS,
     RAW_BOOTSTRAP_URL,
+    RELEASE_TARGETS,
     RELEASES_URL,
     REPOSITORY_URL,
     WEBSITE_URL,
@@ -130,7 +132,7 @@ class TestChecksumManifest:
 class TestArtifactsForVersion:
     def test_artifact_count(self) -> None:
         artifacts = get_artifacts_for_version("0.1.0")
-        assert len(artifacts) == 5
+        assert len(artifacts) == len(RELEASE_TARGETS)
 
     def test_artifact_platforms(self) -> None:
         artifacts = get_artifacts_for_version("0.1.0")
@@ -139,8 +141,16 @@ class TestArtifactsForVersion:
 
     def test_artifact_arches(self) -> None:
         artifacts = get_artifacts_for_version("0.1.0")
-        linux_archs = {a.arch for a in artifacts if a.platform == "linux"}
-        assert linux_archs == {"x86_64", "aarch64"}
+        pairs = {(a.platform, a.arch) for a in artifacts}
+        assert pairs == {
+            (target.platform, target.arch) for target in RELEASE_TARGETS
+        }
+
+    def test_deferred_targets_are_not_advertised(self) -> None:
+        artifacts = get_artifacts_for_version("0.1.0")
+        pairs = {(a.platform, a.arch) for a in artifacts}
+        for target in DEFERRED_TARGETS:
+            assert (target.platform, target.arch) not in pairs
 
     def test_artifact_version_in_name(self) -> None:
         artifacts = get_artifacts_for_version("1.2.3")
@@ -161,7 +171,7 @@ class TestReleaseMetadata:
 
     def test_metadata_artifacts(self) -> None:
         metadata = generate_release_metadata("0.1.0")
-        assert len(metadata["artifacts"]) == 5
+        assert len(metadata["artifacts"]) == len(RELEASE_TARGETS)
         for artifact in metadata["artifacts"]:
             assert "filename" in artifact
             assert "platform" in artifact
@@ -181,4 +191,4 @@ class TestReleaseMetadata:
 
         content = json.loads(output_path.read_text())
         assert content["version"] == "0.1.0"
-        assert len(content["artifacts"]) == 5
+        assert len(content["artifacts"]) == len(RELEASE_TARGETS)

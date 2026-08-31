@@ -6,15 +6,15 @@
 - [x] Define fresh-session execution as the default.
 - [x] Define project-agnostic configuration boundaries.
 - [x] Choose the initial license: MIT.
-- [ ] Define the public configuration schema.
-- [ ] Define the agent adapter protocol.
+- [x] Define the public configuration schema.
+- [x] Define the agent adapter protocol.
 
 ## Phase 1 — Minimal runner
 
 - [x] Implement a CLI that runs one agent iteration.
 - [x] Accept an arbitrary agent command and pass the prompt through stdin or a configured argument.
 - [x] Support working directory, timeout, environment, and exit-code capture.
-- [ ] Read optional instruction, task, and handoff files without assuming their names.
+- [x] Read optional instruction, task, and handoff files without assuming their names.
 - [x] Add dry-run mode.
 - [x] Add deterministic tests with fake agent commands.
 
@@ -42,12 +42,12 @@
 - [x] Provide Markdown checklist and JSON task-state adapters.
 - [x] Support configurable completion commands.
 - [x] Add opt-in archive and commit hooks.
-- [ ] Add CI examples and a security review for command execution.
+- [x] Add CI examples and a security review for command execution.
 
 ## Phase 5 — Public release
 
-- [ ] Publish package and standalone binary distribution options.
-- [ ] Document agent adapter authoring.
-- [ ] Add end-to-end examples for Python, Rust, JavaScript, Flutter, and .NET projects.
-- [ ] Add contribution guidelines and release automation.
+- [x] Publish package and standalone binary distribution options.
+- [x] Document agent adapter authoring.
+- [x] Add end-to-end examples for Python, Rust, JavaScript, Flutter, and .NET projects.
+- [x] Add contribution guidelines and release automation.
 - [ ] Publish the first stable release.

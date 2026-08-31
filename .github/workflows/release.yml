@@ -12,21 +12,22 @@ permissions:
 
 jobs:
   build-artifacts:
+    # Every matrix entry must build on a runner whose native architecture is the
+    # advertised architecture. Targets listed in distribution.DEFERRED_TARGETS
+    # are omitted here on purpose; add them back only together with a runner
+    # that produces that architecture (see RUNNER_NATIVE_ARCH).
     strategy:
       matrix:
         include:
           - platform: linux
             arch: x86_64
             os: ubuntu-latest
-          - platform: linux
-            arch: aarch64
-            os: ubuntu-latest
           - platform: darwin
             arch: x86_64
-            os: macos-latest
+            os: macos-13
           - platform: darwin
             arch: aarch64
-            os: macos-latest
+            os: macos-14
           - platform: win32
             arch: x86_64
             os: windows-latest
@@ -34,6 +35,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify runner architecture matches the advertised target
+        shell: bash
+        run: |
+          case "${{ matrix.arch }}" in
+            x86_64) expected="x86_64|amd64|AMD64" ;;
+            aarch64) expected="aarch64|arm64|ARM64" ;;
+            *) echo "unknown matrix arch: ${{ matrix.arch }}" >&2; exit 1 ;;
+          esac
+          actual="$(uname -m)"
+          if ! printf '%s' "$actual" | grep -Eq "^($expected)$"; then
+            echo "refusing to publish: target is ${{ matrix.arch }} but runner reports $actual" >&2
+            exit 1
+          fi
+          echo "runner architecture ok: $actual"
 
       - uses: actions/setup-python@v5
         with:

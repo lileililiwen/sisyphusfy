@@ -147,6 +147,21 @@ sisyphusfy status --json
 
 Configuration precedence: CLI flags > `.sisyphusfy.toml` > user defaults > built-in defaults.
 
+The selected project directory (`--project-dir`, default `.`) is the working
+directory for every subprocess: agent, verification, workflow validation, and
+completion hooks. Relative paths resolve against it.
+
+## Documentation
+
+| Document | Contents |
+|----------|----------|
+| [docs/configuration.md](docs/configuration.md) | Every `.sisyphusfy.toml` field: type, default, precedence, safety |
+| [docs/adapters.md](docs/adapters.md) | `AgentAdapter` protocol, registry, command construction, model fallback, failure classification, workflow adapters |
+| [docs/examples.md](docs/examples.md) | Minimal end-to-end setups for Python, Rust, JavaScript, Flutter, and .NET |
+| [docs/ci.md](docs/ci.md) | Continuous-integration usage and JSON result consumption |
+| [docs/security.md](docs/security.md) | Command-execution model and review checklist |
+| [docs/deployment.md](docs/deployment.md) | GitHub Pages and custom domain setup |
+
 ## Quick start: durable loop
 
 The loop starts a fresh agent process for every iteration. The task file and
@@ -267,6 +282,24 @@ openspec validate --all --strict
 ```
 
 The repository is initialized for both OpenCode and CodeBuddy workflows. Those integrations are development conveniences; the product itself remains agent-neutral.
+
+## Supported release targets
+
+Installers download a prebuilt archive that matches the host platform and
+architecture. The published set is the same set CI builds, and every target is
+built on a runner whose native architecture matches the artifact label.
+
+| Platform | Architecture | CI runner |
+|----------|--------------|-----------|
+| linux | x86_64 | `ubuntu-latest` |
+| darwin | x86_64 | `macos-13` |
+| darwin | aarch64 | `macos-14` |
+| win32 | x86_64 | `windows-latest` |
+
+`linux/aarch64` is deferred: it is not published because no runner in the
+current matrix produces it natively. Install with `pip install sisyphusfy` on
+that platform. The installer refuses a deferred target instead of downloading a
+mislabeled binary.
 
 ## Status
 

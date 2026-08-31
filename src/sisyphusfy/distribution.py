@@ -14,14 +14,57 @@ RAW_BOOTSTRAP_URL = (
     "https://raw.githubusercontent.com/lileililiwen/sisyphusfy/main/install.sh"
 )
 
-SUPPORTED_PLATFORMS: dict[str, list[str]] = {
-    "linux": ["x86_64", "aarch64"],
-    "darwin": ["x86_64", "aarch64"],
-    "win32": ["x86_64"],
+@dataclass(frozen=True)
+class ReleaseTarget:
+    """A platform/architecture pair and the CI runner that builds it natively."""
+
+    platform: str
+    arch: str
+    runner: str
+
+    @property
+    def slug(self) -> str:
+        return f"{self.platform}-{self.arch}"
+
+
+# The native architecture produced by each CI runner label. A release target is
+# only honest when its runner produces that architecture without emulation.
+RUNNER_NATIVE_ARCH: dict[str, str] = {
+    "ubuntu-latest": "x86_64",
+    "macos-13": "x86_64",
+    "macos-14": "aarch64",
+    "windows-latest": "x86_64",
 }
+
+RELEASE_TARGETS: tuple[ReleaseTarget, ...] = (
+    ReleaseTarget("linux", "x86_64", "ubuntu-latest"),
+    ReleaseTarget("darwin", "x86_64", "macos-13"),
+    ReleaseTarget("darwin", "aarch64", "macos-14"),
+    ReleaseTarget("win32", "x86_64", "windows-latest"),
+)
+
+# Deferred until an aarch64 runner or a verified cross-compilation process
+# exists. Deferred targets must not appear in release metadata, installers, or
+# the CI matrix.
+DEFERRED_TARGETS: tuple[ReleaseTarget, ...] = (ReleaseTarget("linux", "aarch64", ""),)
 
 ARTIFACT_TEMPLATE = "sisyphusfy-{version}-{platform}-{arch}.tar.gz"
 CHECKSUM_FILENAME = "SHA256SUMS.txt"
+
+
+def _supported_platforms() -> dict[str, list[str]]:
+    platforms: dict[str, list[str]] = {}
+    for target in RELEASE_TARGETS:
+        platforms.setdefault(target.platform, []).append(target.arch)
+    return platforms
+
+
+SUPPORTED_PLATFORMS: dict[str, list[str]] = _supported_platforms()
+
+
+def is_supported(platform: str, arch: str) -> bool:
+    """Report whether a prebuilt artifact is published for this pair."""
+    return arch in SUPPORTED_PLATFORMS.get(platform, [])
 
 
 @dataclass

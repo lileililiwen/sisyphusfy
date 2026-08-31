@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -27,6 +27,7 @@ from sisyphusfy.workflows import (
     WorkflowAdapter,
     WorkflowConfig,
     WorkflowError,
+    adapter_runs_commands,
     resolve_workflow_adapter,
 )
 
@@ -40,11 +41,29 @@ class LoopStopReason(str, Enum):
     VERIFICATION_FAILED = "verification_failed"
     MODELS_EXHAUSTED = "models_exhausted"
     ADAPTER_ERROR = "adapter_error"
+    DRY_RUN = "dry_run"
+
+
+class CompletionOutcome(str, Enum):
+    HAS_WORK = "has_work"
+    COMPLETE = "complete"
+    DRY_RUN = "dry_run"
 
 
 @runtime_checkable
 class CompletionStrategy(Protocol):
     def has_work(self, task_path: str) -> bool: ...
+
+
+def completion_strategy_runs_commands(strategy: CompletionStrategy) -> bool:
+    """Report whether completion evaluation would execute a subprocess.
+
+    Custom strategies can declare a ``runs_commands`` attribute instead of
+    being the built-in external-command strategy.
+    """
+    if isinstance(strategy, ExternalCommandCompletion):
+        return bool(strategy.check_command)
+    return bool(getattr(strategy, "runs_commands", False))
 
 
 class MarkdownCheckboxCompletion:
@@ -62,15 +81,27 @@ class MarkdownCheckboxCompletion:
 class ExternalCommandCompletion:
     """Exit 0 from check command means complete."""
 
-    def __init__(self, check_command: list[str]) -> None:
+    def __init__(
+        self,
+        check_command: list[str],
+        timeout: float = 30.0,
+        working_directory: str = ".",
+        dry_run: bool = False,
+    ) -> None:
         self.check_command = check_command
+        self.timeout = timeout
+        self.working_directory = working_directory
+        self.dry_run = dry_run
 
     def has_work(self, task_path: str) -> bool:
+        if self.dry_run:
+            return True
         proc = subprocess.run(
             self.check_command,
             capture_output=True,
-            timeout=30,
+            timeout=self.timeout,
             check=False,
+            cwd=self.working_directory,
         )
         return proc.returncode != 0
 
@@ -178,6 +209,43 @@ def _render_prompt(template: str, **kwargs: str) -> str:
         return template
 
 
+def _resolve_under(working_directory: str, path: str) -> str:
+    """Resolve a configured path against the loop working directory."""
+    candidate = Path(path).expanduser()
+    if candidate.is_absolute():
+        return str(candidate)
+    return str((Path(working_directory) / candidate).resolve())
+
+
+def _scoped_workflow_config(
+    config: WorkflowConfig,
+    working_directory: str,
+    dry_run: bool,
+) -> WorkflowConfig:
+    """Resolve relative workflow paths and scope commands to the working directory."""
+    return replace(
+        config,
+        task_path=_resolve_under(working_directory, config.task_path) if config.task_path else "",
+        state_path=_resolve_under(working_directory, config.state_path) if config.state_path else "",
+        change_dir=_resolve_under(working_directory, config.change_dir) if config.change_dir else "",
+        working_directory=config.working_directory or working_directory,
+        dry_run=config.dry_run or dry_run,
+    )
+
+
+def _hooks_with_directory(
+    hooks: list[HookConfig],
+    working_directory: str,
+) -> list[HookConfig]:
+    """Run unscoped hooks in the loop working directory instead of the caller's cwd."""
+    return [
+        replace(hook, working_directory=working_directory)
+        if hook.working_directory in ("", ".")
+        else hook
+        for hook in hooks
+    ]
+
+
 def _run_iteration(
     adapter: AgentAdapter | None,
     agent_command: list[str],
@@ -217,8 +285,11 @@ def _run_iteration(
 
 
 def run_loop(config: LoopConfig) -> LoopResult:
-    task_path = str(Path(config.task_path).resolve())
-    handoff_path = str(Path(config.handoff_path).resolve()) if config.handoff_path else None
+    working_directory = str(Path(config.working_directory).resolve())
+    task_path = _resolve_under(working_directory, config.task_path)
+    handoff_path = (
+        _resolve_under(working_directory, config.handoff_path) if config.handoff_path else None
+    )
 
     adapter: AgentAdapter | None = None
     if config.adapter_config is not None:
@@ -236,7 +307,11 @@ def run_loop(config: LoopConfig) -> LoopResult:
     workflow_adapter = config.workflow_adapter
     if workflow_adapter is None and config.workflow_config is not None:
         try:
-            workflow_adapter = resolve_workflow_adapter(config.workflow_config)
+            workflow_adapter = resolve_workflow_adapter(
+                _scoped_workflow_config(
+                    config.workflow_config, working_directory, config.dry_run
+                )
+            )
         except WorkflowError as exc:
             return LoopResult(
                 stop_reason=LoopStopReason.ADAPTER_ERROR,
@@ -246,33 +321,83 @@ def run_loop(config: LoopConfig) -> LoopResult:
                 adapter_error=f"workflow adapter error: {exc}",
             )
 
-    if config.completion_strategy and not config.completion_strategy.has_work(task_path):
-        pipeline_result = None
-        if config.completion_hooks:
-            pipeline_result = run_completion_pipeline(config.completion_hooks, dry_run=config.dry_run)
-        return LoopResult(
-            stop_reason=LoopStopReason.COMPLETE,
-            iterations=0,
-            final_task_path=task_path,
-            final_handoff_path=handoff_path,
-            completion_pipeline_result=pipeline_result,
-        )
-
-    if workflow_adapter is not None and not workflow_adapter.has_work():
-        pipeline_result = None
-        if config.completion_hooks:
-            pipeline_result = run_completion_pipeline(config.completion_hooks, dry_run=config.dry_run)
-        return LoopResult(
-            stop_reason=LoopStopReason.COMPLETE,
-            iterations=0,
-            final_task_path=task_path,
-            final_handoff_path=handoff_path,
-            completion_pipeline_result=pipeline_result,
-        )
-
     run_records: list[RunRecord] = []
-    prev_state = _snapshot(task_path, handoff_path)
     all_model_attempts: list[str] = []
+    hooks = _hooks_with_directory(config.completion_hooks, working_directory)
+
+    def _run_verification(iteration: int) -> LoopResult | None:
+        """Run verification once. Returns a failure result, or None on success."""
+        if not config.verification_command:
+            return None
+        vr = run_agent(
+            config.verification_command,
+            working_directory=working_directory,
+            timeout=config.verification_timeout,
+            dry_run=config.dry_run,
+        )
+        if vr.timed_out:
+            return LoopResult(
+                stop_reason=LoopStopReason.TIMEOUT,
+                iterations=iteration,
+                run_records=run_records,
+                final_task_path=task_path,
+                final_handoff_path=handoff_path,
+                model_attempts=all_model_attempts,
+            )
+        if vr.classification.value not in ("success", "dry_run"):
+            return LoopResult(
+                stop_reason=LoopStopReason.VERIFICATION_FAILED,
+                iterations=iteration,
+                run_records=run_records,
+                final_task_path=task_path,
+                final_handoff_path=handoff_path,
+                model_attempts=all_model_attempts,
+            )
+        return None
+
+    def _evaluate_completion(reload: bool) -> CompletionOutcome:
+        """Decide whether work remains without executing commands under dry-run."""
+        if config.completion_strategy is not None:
+            if config.dry_run and completion_strategy_runs_commands(config.completion_strategy):
+                return CompletionOutcome.DRY_RUN
+            has_work = config.completion_strategy.has_work(task_path)
+        elif workflow_adapter is not None:
+            if reload:
+                workflow_adapter.reload()
+            if config.dry_run and adapter_runs_commands(workflow_adapter):
+                return CompletionOutcome.DRY_RUN
+            has_work = workflow_adapter.has_work()
+        else:
+            return CompletionOutcome.HAS_WORK
+        return CompletionOutcome.HAS_WORK if has_work else CompletionOutcome.COMPLETE
+
+    def _complete(iteration: int) -> LoopResult:
+        pipeline_result = run_completion_pipeline(hooks, dry_run=config.dry_run) if hooks else None
+        return LoopResult(
+            stop_reason=LoopStopReason.COMPLETE,
+            iterations=iteration,
+            run_records=run_records,
+            final_task_path=task_path,
+            final_handoff_path=handoff_path,
+            model_attempts=all_model_attempts,
+            completion_pipeline_result=pipeline_result,
+        )
+
+    outcome = _evaluate_completion(reload=False)
+    if outcome is CompletionOutcome.DRY_RUN:
+        return LoopResult(
+            stop_reason=LoopStopReason.DRY_RUN,
+            iterations=0,
+            final_task_path=task_path,
+            final_handoff_path=handoff_path,
+        )
+    if outcome is CompletionOutcome.COMPLETE:
+        verification_failure = _run_verification(0)
+        if verification_failure is not None:
+            return verification_failure
+        return _complete(0)
+
+    prev_state = _snapshot(task_path, handoff_path)
 
     for i in range(1, config.max_iterations + 1):
         prompt = _render_prompt(
@@ -285,7 +410,7 @@ def run_loop(config: LoopConfig) -> LoopResult:
             return _run_iteration(
                 adapter,
                 config.agent_command,
-                config.working_directory,
+                working_directory,
                 p,
                 config.agent_timeout,
                 model=model,
@@ -298,7 +423,7 @@ def run_loop(config: LoopConfig) -> LoopResult:
                 result, attempts = try_fallback(
                     fallback_adapter,
                     config.model_chain,
-                    config.working_directory,
+                    working_directory,
                     prompt,
                     _run_with_model,
                 )
@@ -357,87 +482,24 @@ def run_loop(config: LoopConfig) -> LoopResult:
                     model_attempts=all_model_attempts,
                 )
 
-        if config.verification_command:
-            vr = run_agent(
-                config.verification_command,
-                working_directory=config.working_directory,
-                timeout=config.verification_timeout,
-                dry_run=config.dry_run,
-            )
-            if vr.timed_out:
-                return LoopResult(
-                    stop_reason=LoopStopReason.TIMEOUT,
-                    iterations=i,
-                    run_records=run_records,
-                    final_task_path=task_path,
-                    final_handoff_path=handoff_path,
-                    model_attempts=all_model_attempts,
-                )
-            if vr.classification.value != "success" and vr.classification.value != "dry_run":
-                return LoopResult(
-                    stop_reason=LoopStopReason.VERIFICATION_FAILED,
-                    iterations=i,
-                    run_records=run_records,
-                    final_task_path=task_path,
-                    final_handoff_path=handoff_path,
-                    model_attempts=all_model_attempts,
-                )
+        # Verification runs exactly once per productive iteration and always
+        # before completion is accepted or hooks are invoked.
+        verification_failure = _run_verification(i)
+        if verification_failure is not None:
+            return verification_failure
 
-        if config.completion_strategy and not config.completion_strategy.has_work(task_path):
-            pipeline_result = None
-            if config.completion_hooks:
-                pipeline_result = run_completion_pipeline(config.completion_hooks, dry_run=config.dry_run)
+        outcome = _evaluate_completion(reload=True)
+        if outcome is CompletionOutcome.DRY_RUN:
             return LoopResult(
-                stop_reason=LoopStopReason.COMPLETE,
+                stop_reason=LoopStopReason.DRY_RUN,
                 iterations=i,
                 run_records=run_records,
                 final_task_path=task_path,
                 final_handoff_path=handoff_path,
                 model_attempts=all_model_attempts,
-                completion_pipeline_result=pipeline_result,
             )
-
-        if workflow_adapter is not None:
-            workflow_adapter.reload()
-            if not workflow_adapter.has_work():
-                pipeline_result = None
-                if config.completion_hooks:
-                    pipeline_result = run_completion_pipeline(config.completion_hooks, dry_run=config.dry_run)
-                return LoopResult(
-                    stop_reason=LoopStopReason.COMPLETE,
-                    iterations=i,
-                    run_records=run_records,
-                    final_task_path=task_path,
-                    final_handoff_path=handoff_path,
-                    model_attempts=all_model_attempts,
-                    completion_pipeline_result=pipeline_result,
-                )
-
-        if config.verification_command:
-            vr = run_agent(
-                config.verification_command,
-                working_directory=config.working_directory,
-                timeout=config.verification_timeout,
-                dry_run=config.dry_run,
-            )
-            if vr.timed_out:
-                return LoopResult(
-                    stop_reason=LoopStopReason.TIMEOUT,
-                    iterations=i,
-                    run_records=run_records,
-                    final_task_path=task_path,
-                    final_handoff_path=handoff_path,
-                    model_attempts=all_model_attempts,
-                )
-            if vr.classification.value != "success" and vr.classification.value != "dry_run":
-                return LoopResult(
-                    stop_reason=LoopStopReason.VERIFICATION_FAILED,
-                    iterations=i,
-                    run_records=run_records,
-                    final_task_path=task_path,
-                    final_handoff_path=handoff_path,
-                    model_attempts=all_model_attempts,
-                )
+        if outcome is CompletionOutcome.COMPLETE:
+            return _complete(i)
 
         curr_state = _snapshot(task_path, handoff_path)
         if not _changed(prev_state, curr_state):

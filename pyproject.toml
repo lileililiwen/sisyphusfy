@@ -10,7 +10,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "pyyaml>=6.0"]
 
 [project.scripts]
 sisyphusfy = "sisyphusfy.cli:main"

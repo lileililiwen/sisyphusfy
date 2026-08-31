@@ -93,6 +93,7 @@ def cmd_run(
     if dry_run:
         return _dry_run_output(
             config=config,
+            project_dir=project_dir,
             task_path=task_path,
             handoff_path=handoff_path,
             workflow_type=workflow_type,
@@ -103,6 +104,7 @@ def cmd_run(
 
     return _execute_loop(
         config=config,
+        project_dir=project_dir,
         task_path=task_path,
         handoff_path=handoff_path,
         workflow_type=workflow_type,
@@ -147,6 +149,7 @@ def cmd_resume(
     if dry_run:
         return _dry_run_output(
             config=config,
+            project_dir=project_dir,
             task_path=task_path,
             handoff_path=handoff_path,
             workflow_type=workflow_type,
@@ -157,6 +160,7 @@ def cmd_resume(
 
     return _execute_loop(
         config=config,
+        project_dir=project_dir,
         task_path=task_path,
         handoff_path=handoff_path,
         workflow_type=workflow_type,
@@ -298,6 +302,7 @@ def cmd_doctor(project_dir: str = ".", json_output: bool = False) -> int:
 
 def _dry_run_output(
     config: SisyphusConfig,
+    project_dir: str,
     task_path: str,
     handoff_path: str | None,
     workflow_type: str,
@@ -307,6 +312,7 @@ def _dry_run_output(
 ) -> int:
     data = {
         "dry_run": True,
+        "project_dir": str(Path(project_dir).resolve()),
         "adapter": config.adapter,
         "model_chain": config.model_chain,
         "task_path": task_path,
@@ -325,6 +331,7 @@ def _dry_run_output(
         print(json.dumps(data, indent=2))
     else:
         print("dry-run: planned loop configuration")
+        print(f"  project:    {Path(project_dir).resolve()!s}")
         print(f"  adapter:     {config.adapter}")
         if config.model_chain:
             print(f"  models:      {' -> '.join(config.model_chain)}")
@@ -346,6 +353,7 @@ def _dry_run_output(
 
 def _execute_loop(
     config: SisyphusConfig,
+    project_dir: str,
     task_path: str,
     handoff_path: str | None,
     workflow_type: str,
@@ -357,6 +365,8 @@ def _execute_loop(
     from sisyphusfy.hooks import HookConfig, HookType
     from sisyphusfy.loop import LoopConfig, MarkdownCheckboxCompletion, run_loop
     from sisyphusfy.workflows import WorkflowConfig
+
+    project_path = str(Path(project_dir).resolve())
 
     adapter_config = AdapterConfig(
         name=config.adapter,
@@ -373,6 +383,7 @@ def _execute_loop(
             change_dir=openspec_dir,
             validation_command=config.verification_command or [],
             timeout=config.verification_timeout,
+            working_directory=project_path,
         )
 
     completion_hooks = []
@@ -385,7 +396,7 @@ def _execute_loop(
             HookConfig(
                 hook_type=HookType.ARCHIVE,
                 command=archive_cmd,
-                working_directory=".",
+                working_directory=project_path,
                 enabled=True,
             )
         )
@@ -394,7 +405,7 @@ def _execute_loop(
             HookConfig(
                 hook_type=HookType.COMMIT,
                 command=["git", "commit", "-m", "sisyphusfy: completed iteration"],
-                working_directory=".",
+                working_directory=project_path,
                 allowed_files=config.commit_allowed_files,
                 enabled=True,
             )
@@ -402,6 +413,7 @@ def _execute_loop(
 
     loop_config = LoopConfig(
         agent_command=[config.adapter],
+        working_directory=project_path,
         task_path=task_path,
         handoff_path=handoff_path,
         verification_command=verification_command,

@@ -21,6 +21,15 @@ const ARCH_MAP = {
   arm64: "aarch64",
 };
 
+// Only targets with a published artifact may be advertised. Deferred targets
+// (for example linux-aarch64) must not be resolvable here.
+const SUPPORTED_TARGETS = [
+  "linux-x86_64",
+  "darwin-x86_64",
+  "darwin-aarch64",
+  "win32-x86_64",
+];
+
 function getPlatform() {
   const platform = PLATFORM_MAP[process.platform];
   if (!platform) {
@@ -32,6 +41,12 @@ function getPlatform() {
   if (!arch) {
     throw new Error(
       `Unsupported architecture: ${process.arch}. Supported: ${Object.keys(ARCH_MAP).join(", ")}`
+    );
+  }
+  const target = `${platform}-${arch}`;
+  if (!SUPPORTED_TARGETS.includes(target)) {
+    throw new Error(
+      `No prebuilt release for ${target}. Supported: ${SUPPORTED_TARGETS.join(", ")}. Install with 'pip install sisyphusfy'.`
     );
   }
   return { platform, arch };

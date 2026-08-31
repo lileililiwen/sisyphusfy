@@ -78,6 +78,20 @@ detect_platform() {
       ;;
   esac
 
+  # Only targets with a published artifact may be advertised. Anything else
+  # (for example linux-aarch64) is deferred and would download a mislabeled
+  # binary or fail with a missing checksum.
+  case "${platform}-${arch}" in
+    linux-x86_64|darwin-x86_64|darwin-aarch64)
+      ;;
+    *)
+      echo "Error: no prebuilt release for ${platform}-${arch}" >&2
+      echo "Supported targets: linux-x86_64, darwin-x86_64, darwin-aarch64" >&2
+      echo "Install with 'pip install sisyphusfy' on this platform." >&2
+      exit 1
+      ;;
+  esac
+
   echo "${platform}-${arch}"
 }
 
