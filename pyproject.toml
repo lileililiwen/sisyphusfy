@@ -4,10 +4,50 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sisyphusfy"
-description = "Project-agnostic supervisor for disposable AI-agent sessions"
-requires-python = ">=3.10"
+description = "Project-agnostic supervisor for fresh AI coding-agent sessions with durable task state and verification"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "lileililiwen" },
+]
+keywords = [
+    "ai-agent",
+    "coding-agent",
+    "agent-orchestration",
+    "automation",
+    "developer-tools",
+    "llm",
+    "model-fallback",
+    "task-runner",
+    "verification",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Utilities",
+]
 dependencies = []
+requires-python = ">=3.10"
 dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://sisyphusfy.dev/"
+Documentation = "https://github.com/lileililiwen/sisyphusfy/tree/main/docs"
+Repository = "https://github.com/lileililiwen/sisyphusfy"
+Issues = "https://github.com/lileililiwen/sisyphusfy/issues"
+Changelog = "https://github.com/lileililiwen/sisyphusfy/releases"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pyyaml>=6.0"]

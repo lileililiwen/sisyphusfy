@@ -2,7 +2,18 @@
 
 Fresh agent sessions. Persistent project progress.
 
-Sisyphusfy is a project-agnostic runner for executing software tasks through disposable AI-agent sessions. It keeps durable state in project files, supports multiple agent CLIs and model fallback, and avoids carrying an expensive conversation history from one task or specification to the next.
+Sisyphusfy is a project-agnostic supervisor for AI coding agents. It runs each software task in a fresh disposable session, keeps progress in durable project files, switches models when agents fail or run out of quota, and verifies outcomes independently.
+
+It is for developers who want repeatable agent-assisted development without coupling their projects to one model, one agent CLI, or one conversation history. Use it as a small command runner, a durable task loop, or an automation building block for OpenSpec and other repository workflows.
+
+## What it solves
+
+- **Fresh context:** each iteration starts a new agent process, reducing stale or expensive conversation history.
+- **Durable progress:** task state and handoffs live in the project, so another session can resume the work.
+- **Agent neutrality:** adapters support different agent CLIs while the loop engine stays independent of them.
+- **Model fallback:** quota exhaustion, timeouts, and classified failures can move work to the next configured model.
+- **Evidence-based completion:** verification commands run independently; agent claims are not treated as proof.
+- **Safe automation:** dry runs, structured JSON results, timeout handling, and explicit permission boundaries support CI and local use.
 
 ## Why
 

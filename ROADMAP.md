@@ -52,4 +52,4 @@
 - [x] Add contribution guidelines and release automation.
 - [x] Synchronize release version metadata: the package version is the source of truth, and the npm manifest, npm launcher, and installers are verified against it.
 - [x] Publish the first stable release: GitHub Release v0.1.0 ships sisyphusfy-0.1.0-{linux-x86_64,darwin-x86_64,darwin-aarch64,win32-x86_64}.tar.gz plus SHA256SUMS.txt.
-- [ ] Register the PyPI project and trusted publisher; the publish-pypi job fails with `invalid-publisher` until then.
+- [x] Register the PyPI project and trusted publisher; PyPI publication of `sisyphusfy==0.1.0` succeeds through the `publish-pypi` job.

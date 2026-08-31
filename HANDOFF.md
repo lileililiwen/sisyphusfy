@@ -39,8 +39,7 @@ Release-ready codebase with distribution and installation support.
 - **Completion checks run in the project directory.** The loop scopes the built-in external completion strategy to its working directory (an explicit strategy directory still wins), so `sisyphusfy loop -d <project> --completion-strategy external` checks inside `<project>`.
 - **Missing commands are structured failures.** `run_agent()` classifies a missing executable as `command_not_found` (exit status 127) and the loop reports a `command_not_found` stop reason naming the command, for agent, verification, and completion-check commands. No call site raises an unhandled `FileNotFoundError`.
 - **Release version metadata has one source of truth.** `sisyphusfy.__version__` is the Python-side source; `pyproject.toml` reads it through setuptools dynamic metadata, and `tests/test_version_sync.py` asserts the npm manifest, npm launcher, and both installers agree. `release.yml` fails the publish job when the Git tag disagrees with the packaged version.
-- **First GitHub Release is published.** Run `33362030032` on tag `v0.1.0` (`82c0928`) succeeded: all four `build-artifacts` jobs, `publish-release`, `test-installers`, `test-powershell`, `verify-powershell-syntax`, and `verify-links`. Release `v0.1.0` carries `SHA256SUMS.txt` and `sisyphusfy-0.1.0-{linux-x86_64,darwin-x86_64,darwin-aarch64,win32-x86_64}.tar.gz`.
-- **Known release gap — PyPI publication.** The only failing job is `publish-pypi`, which stops with `Trusted publishing exchange failure: invalid-publisher (Publisher with matching claims was not found)`. The workflow is correct; the missing piece is external: register the `sisyphusfy` project on PyPI and add a trusted publisher for `lileililiwen/sisyphusfy`, workflow `release.yml`, environment `pypi`. The job fails loudly on every tag push, by design, so re-tagging after registration is enough.
+- **First stable release is fully published.** Run `33362030032` on tag `v0.1.0` completed all four `build-artifacts` jobs, `publish-release`, `publish-pypi`, `test-installers`, `test-powershell`, `verify-powershell-syntax`, and `verify-links` successfully. GitHub Release `v0.1.0` carries `SHA256SUMS.txt` and `sisyphusfy-0.1.0-{linux-x86_64,darwin-x86_64,darwin-aarch64,win32-x86_64}.tar.gz`; PyPI carries the wheel and sdist.
 - Public contracts documented: `docs/configuration.md` (every TOML field with type, default, precedence, safety), `docs/adapters.md` (agent and workflow adapter protocols, registry, model fallback, failure classification), `docs/examples.md` (Python, Rust, JavaScript, Flutter, .NET), `docs/ci.md` (CI usage), `docs/security.md` (command-execution model and review checklist).
 - GitHub Pages deployment documentation in `docs/deployment.md`.
 - 442 tests across 38 test files (441 passed + 1 skipped with no usable PowerShell runtime, 442 passed where one is available); `ruff check` clean; `compileall` clean; `openspec validate --all --strict` passes. The PowerShell installer syntax check runs when a runnable PowerShell runtime is present and is reported as skipped (not passed, not failed) when none is available.
@@ -48,10 +47,9 @@ Release-ready codebase with distribution and installation support.
 
 ## Next action
 
-The first stable release is published: `v0.1.0` on GitHub with the four platform archives and checksums, produced entirely by CI from the tag. One external step remains.
+The first stable release is published: `v0.1.0` on GitHub with the four platform archives and checksums, and `sisyphusfy==0.1.0` is available on PyPI. It was produced entirely by CI from the tag.
 
-1. Register `sisyphusfy` on PyPI and add a trusted publisher (owner `lileililiwen`, repo `sisyphusfy`, workflow `release.yml`, environment `pypi`). The `publish-pypi` job then succeeds on the next tag push; today it fails with `invalid-publisher`.
-2. Bump `sisyphusfy.__version__` and re-tag for the next release; `tests/test_version_sync.py` keeps the npm manifest, npm launcher, and both installers in step.
+1. Bump `sisyphusfy.__version__` and re-tag for the next release; `tests/test_version_sync.py` keeps the npm manifest, npm launcher, and both installers in step.
 
 ## Verification gates
 
