@@ -1,36 +1,6 @@
-# iteration-loop Specification
+# iteration-loop Specification Deltas
 
-## Purpose
-Bounded fresh iterations with durable state persistence, stopping on a failed
-agent run, and verification of iterations that exit zero.
-## Requirements
-### Requirement: Execute bounded fresh iterations
-
-The system MUST execute at most the configured number of iterations, invoking a fresh agent process for each iteration.
-
-#### Scenario: Work remains
-
-- **WHEN** task state reports incomplete work and the iteration limit is not reached
-- **THEN** the system MUST invoke one new agent process for the next iteration
-
-#### Scenario: Iteration limit reached
-
-- **WHEN** the configured maximum is reached
-- **THEN** the system MUST stop with a limit classification
-
-### Requirement: Persist and inspect durable state
-
-The system MUST use configured task and handoff paths without assuming a language or repository layout.
-
-#### Scenario: Agent updates state
-
-- **WHEN** an iteration exits successfully and task or handoff content changes
-- **THEN** the system MUST retain the changed workspace state for the next iteration
-
-#### Scenario: Agent does not update state
-
-- **WHEN** an iteration exits successfully but configured state is unchanged
-- **THEN** the system MUST stop with an unchanged-state classification
+## MODIFIED Requirements
 
 ### Requirement: Verify and classify outcomes
 
@@ -58,6 +28,8 @@ timeout, blocked, and verification-failure results.
 - **WHEN** an agent process exits with a non-zero status
 - **THEN** the system MUST NOT run the verification command and MUST NOT invoke
   completion hooks for that iteration
+
+## ADDED Requirements
 
 ### Requirement: Stop when an agent run fails
 
@@ -89,4 +61,3 @@ verification and before completion hooks.
 - **WHEN** a configured model fails with a non-retryable classification
 - **THEN** the system MUST stop with an `agent_failed` result and MUST NOT try
   the remaining models
-

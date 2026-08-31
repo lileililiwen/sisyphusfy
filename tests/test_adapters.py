@@ -195,3 +195,83 @@ class TestTryFallback:
         with pytest.raises(ModelChainExhausted) as exc_info:
             try_fallback(adapter, ["model-a", "model-b"], "/tmp", None, run_fn)
         assert exc_info.value.attempts == ["model-a", "model-b"]
+
+    def test_exhausted_models_carry_the_last_result(self) -> None:
+        adapter = GenericCommandAdapter(command=["x"])
+
+        def run_fn(model: str = "default") -> object:
+            class R:
+                exit_status = 1
+                stderr = "quota exceeded"
+                timed_out = False
+            return R()
+
+        with pytest.raises(ModelChainExhausted) as exc_info:
+            try_fallback(adapter, ["model-a", "model-b"], "/tmp", None, run_fn)
+        assert exc_info.value.last_result is not None
+        assert exc_info.value.last_result.exit_status == 1
+
+
+class TestParseError:
+    ENVELOPE = """\
+Error: {
+"name": "UnknownError",
+"data": {
+"message": "Unexpected server error. Check server logs for details.",
+"ref": "err_cbece906"
+}
+}
+"""
+
+    def test_extracts_name_message_and_reference(self) -> None:
+        error = OpenCodeAdapter().parse_error(self.ENVELOPE)
+        assert error is not None
+        assert error.name == "UnknownError"
+        assert error.message == "Unexpected server error. Check server logs for details."
+        assert error.reference == "err_cbece906"
+
+    def test_finds_an_envelope_inside_other_output(self) -> None:
+        output = f"reading tasks.md\n{self.ENVELOPE}\nmore output\n"
+        error = OpenCodeAdapter().parse_error(output)
+        assert error is not None
+        assert error.reference == "err_cbece906"
+
+    def test_returns_none_without_an_envelope(self) -> None:
+        assert OpenCodeAdapter().parse_error("all tests passed") is None
+
+    def test_returns_none_for_malformed_json(self) -> None:
+        assert OpenCodeAdapter().parse_error('Error: {"name": "UnknownError",') is None
+        assert OpenCodeAdapter().parse_error('{"name": }') is None
+
+    def test_returns_none_for_a_non_error_object(self) -> None:
+        assert OpenCodeAdapter().parse_error('{"result": "ok"}') is None
+
+    def test_ignores_braces_inside_strings(self) -> None:
+        output = 'Error: {"name": "X", "data": {"message": "unbalanced } brace"}}'
+        error = OpenCodeAdapter().parse_error(output)
+        assert error is not None
+        assert error.message == "unbalanced } brace"
+
+    def test_every_builtin_exposes_parse_error(self) -> None:
+        adapters = [
+            OpenCodeAdapter(),
+            CodeBuddyAdapter(),
+            GenericCommandAdapter(command=["x"]),
+        ]
+        for adapter in adapters:
+            error = adapter.parse_error(self.ENVELOPE)
+            assert error is not None, f"{type(adapter).__name__} has no parse_error"
+            assert error.reference == "err_cbece906"
+
+    def test_agent_error_to_dict(self) -> None:
+        from sisyphusfy.adapters import AgentError
+
+        assert AgentError(name="N").to_dict() == {"name": "N"}
+        assert AgentError().to_dict() == {}
+        assert AgentError(
+            name="UnknownError", message="boom", reference="err_1"
+        ).to_dict() == {
+            "name": "UnknownError",
+            "message": "boom",
+            "reference": "err_1",
+        }

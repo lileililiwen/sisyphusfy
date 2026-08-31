@@ -156,6 +156,7 @@ class TestFallbackModelReplacement:
         )
 
         result = run_loop(config)
-        assert result.stop_reason == LoopStopReason.MODELS_EXHAUSTED
+        assert result.stop_reason == LoopStopReason.AGENT_FAILED
         env_content = env_log.read_text().strip().splitlines()
         assert env_content == ["model-a"]
+        assert result.model_attempts == ["model-a"]

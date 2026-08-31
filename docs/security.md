@@ -54,8 +54,9 @@ enable them, exactly as you would review a `Makefile` target or a CI step.
   environment values. Default output and JSON stay concise; full streams require
   `--verbose` or reading the log.
 - **Structured failures.** Failures are reported as data (`verification_failed`,
-  `blocked`, `timeout`, `command_not_found`, `adapter_error`, `interrupted`)
-  instead of being retried blindly or surfacing as an unhandled exception. A
+  `agent_failed`, `blocked`, `timeout`, `command_not_found`, `adapter_error`,
+  `interrupted`) instead of being retried blindly or surfacing as an unhandled
+  exception. A
   missing agent, verification, or completion command names the command that
   could not be executed.
 - **Progress stays out of the result.** Live progress and heartbeats are written

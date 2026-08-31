@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol, runtime_checkable
@@ -25,6 +26,8 @@ class AgentAdapter(Protocol):
 
     def classify_failure(self, exit_status: int, stderr: str) -> FailureClass: ...
 
+    def parse_error(self, output: str) -> AgentError | None: ...
+
 
 @dataclass
 class AdapterConfig:
@@ -37,10 +40,109 @@ class AdapterError(Exception):
     pass
 
 
+@dataclass
+class AgentError:
+    """A structured error recovered from an agent's own output.
+
+    Agents differ in how they report failures, so every field is optional: the
+    loop stops on the exit status whether or not an error can be parsed.
+    """
+
+    name: str | None = None
+    message: str | None = None
+    reference: str | None = None
+
+    def to_dict(self) -> dict:
+        d: dict = {}
+        if self.name:
+            d["name"] = self.name
+        if self.message:
+            d["message"] = self.message
+        if self.reference:
+            d["reference"] = self.reference
+        return d
+
+
+def parse_error_envelope(output: str) -> AgentError | None:
+    """Return the first JSON error envelope in combined agent output.
+
+    Agents that report structured errors print an object, sometimes across
+    several lines and sometimes on stdout, for example::
+
+        Error: {"name": "UnknownError",
+                "data": {"message": "Unexpected server error.", "ref": "err_abc"}}
+
+    The scan tracks brace depth outside string literals and only decodes a
+    balanced object that carries a ``name``, so ordinary agent output costs
+    nothing and a malformed envelope never raises.
+    """
+    depth = 0
+    start = 0
+    in_string = False
+    escaped = False
+
+    for index, char in enumerate(output):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}":
+            if depth == 0:
+                continue
+            depth -= 1
+            if depth == 0:
+                error = _error_from_json(output[start : index + 1])
+                if error is not None:
+                    return error
+
+    return None
+
+
+def _error_from_json(candidate: str) -> AgentError | None:
+    """Decode one balanced object, or return None when it is not an error."""
+    if '"name"' not in candidate:
+        return None
+    try:
+        payload = json.loads(candidate)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    name = payload.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    message = data.get("message", payload.get("message"))
+    reference = data.get("ref", data.get("reference", payload.get("ref")))
+    return AgentError(
+        name=name,
+        message=message if isinstance(message, str) else None,
+        reference=reference if isinstance(reference, str) else None,
+    )
+
+
 class ModelChainExhausted(Exception):
-    def __init__(self, model_chain: list[str], attempts: list[str]) -> None:
+    def __init__(
+        self,
+        model_chain: list[str],
+        attempts: list[str],
+        last_result: object | None = None,
+    ) -> None:
         self.model_chain = model_chain
         self.attempts = attempts
+        self.last_result = last_result
         msg = f"all models exhausted: {', '.join(attempts)}"
         super().__init__(msg)
 
@@ -86,6 +188,9 @@ class GenericCommandAdapter:
             return FailureClass.RETRYABLE_PROCESS
         return FailureClass.NON_RETRYABLE
 
+    def parse_error(self, output: str) -> AgentError | None:
+        return parse_error_envelope(output)
+
 
 class OpenCodeAdapter:
     def __init__(self, model: str | None = None) -> None:
@@ -115,6 +220,9 @@ class OpenCodeAdapter:
             return FailureClass.RETRYABLE_PROCESS
         return FailureClass.NON_RETRYABLE
 
+    def parse_error(self, output: str) -> AgentError | None:
+        return parse_error_envelope(output)
+
 
 class CodeBuddyAdapter:
     def __init__(self, model: str | None = None) -> None:
@@ -143,6 +251,9 @@ class CodeBuddyAdapter:
         if exit_status == -1 or exit_status > 128:
             return FailureClass.RETRYABLE_PROCESS
         return FailureClass.NON_RETRYABLE
+
+    def parse_error(self, output: str) -> AgentError | None:
+        return parse_error_envelope(output)
 
 
 _BUILTIN_ADAPTERS: dict[str, type] = {
@@ -194,6 +305,7 @@ def try_fallback(
     max_retries: int = 0,
 ) -> tuple[object, list[str]]:
     attempts: list[str] = []
+    result: object | None = None
 
     models = model_chain if model_chain else [adapter.model or "default"]
 
@@ -218,4 +330,6 @@ def try_fallback(
             continue
         return result, attempts
 
-    raise ModelChainExhausted(model_chain=model_chain, attempts=attempts)
+    raise ModelChainExhausted(
+        model_chain=model_chain, attempts=attempts, last_result=result
+    )

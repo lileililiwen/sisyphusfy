@@ -11,8 +11,8 @@ It is for developers who want repeatable agent-assisted development without coup
 - **Fresh context:** each iteration starts a new agent process, reducing stale or expensive conversation history.
 - **Durable progress:** task state and handoffs live in the project, so another session can resume the work.
 - **Agent neutrality:** adapters support different agent CLIs while the loop engine stays independent of them.
-- **Model fallback:** quota exhaustion, timeouts, and classified failures can move work to the next configured model.
-- **Evidence-based completion:** verification commands run independently; agent claims are not treated as proof.
+- **Model fallback:** quota exhaustion, timeouts, and failures classified retryable can move work to the next configured model; a non-retryable failure stops the run.
+- **Evidence-based completion:** verification commands run independently of the agent and only after an iteration exits zero; agent claims are not treated as proof.
 - **Safe automation:** dry runs, structured JSON results, timeout handling, and explicit permission boundaries support CI and local use.
 
 ## Why
@@ -21,7 +21,7 @@ AI coding sessions become expensive and fragile when conversation history grows 
 
 - one session performs a small unit of work;
 - task state and a concise handoff are written to disk;
-- failures, quota exhaustion, and timeouts can switch to another model;
+- failures classified retryable, quota exhaustion, and timeouts can switch to another model; other failures stop the run;
 - the next session reconstructs only the necessary context;
 - a new specification starts with a fresh conversation.
 
@@ -199,6 +199,25 @@ verification failed: dotnet test App.sln (exit 1)
 resume with: sisyphusfy resume
 ```
 
+An agent that exits non-zero stops the loop immediately. Verification never
+runs against a failed iteration, and the agent's own error is reported with its
+reference and the path of the log that holds the full output:
+
+```text
+[agent] failed: opencode exited with code 1
+[agent] error: Unexpected server error. Check server logs for details.
+[agent] reference: err_cbece906
+[agent] diagnostics: .sisyphusfy/logs/verification-20260831T104500-1234-i1.log
+  inspect with: sisyphusfy resume --verbose
+stopped: agent_failed
+resume with: sisyphusfy resume
+```
+
+Errors are recovered from a JSON envelope in the agent's output when the adapter
+recognizes one; without a recognizable error the stop reason, exit status, and
+log path still stand on their own. `blocked`, `timeout`, `interrupted`, and
+`command_not_found` keep their own classifications ahead of `agent_failed`.
+
 Logs live in `<project>/.sisyphusfy/logs/`, one file per run and iteration, with
 the newest 20 kept. They are local diagnostics: Sisyphusfy never commits or
 archives them, and it records no environment values. Default output stays
@@ -250,7 +269,7 @@ strings, and retained output stays bounded.
 | Document | Contents |
 |----------|----------|
 | [docs/configuration.md](docs/configuration.md) | Every `.sisyphusfy.toml` field: type, default, precedence, safety |
-| [docs/adapters.md](docs/adapters.md) | `AgentAdapter` protocol, registry, command construction, model fallback, failure classification, workflow adapters |
+| [docs/adapters.md](docs/adapters.md) | `AgentAdapter` protocol, registry, command construction, model fallback, failure classification, structured agent error parsing, workflow adapters |
 | [docs/examples.md](docs/examples.md) | Minimal end-to-end setups for Python, Rust, JavaScript, Flutter, and .NET |
 | [docs/ci.md](docs/ci.md) | Continuous-integration usage and JSON result consumption |
 | [docs/security.md](docs/security.md) | Command-execution model and review checklist |

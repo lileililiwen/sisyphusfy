@@ -505,7 +505,7 @@ class TestBlockedSignalDetection:
         )
 
         result = run_loop(config)
-        assert result.stop_reason != LoopStopReason.BLOCKED
+        assert result.stop_reason == LoopStopReason.AGENT_FAILED
 
     def test_exit_code_not_blocked(self, tmp_path: Path) -> None:
         task_path = tmp_path / "task.md"
@@ -529,10 +529,7 @@ class TestBlockedSignalDetection:
         )
 
         result = run_loop(config)
-        assert result.stop_reason != LoopStopReason.BLOCKED
-
-
-# ---------------------------------------------------------------------------
+        assert result.stop_reason == LoopStopReason.AGENT_FAILED# ---------------------------------------------------------------------------
 # Task 7: Commit allowlist enforcement
 # ---------------------------------------------------------------------------
 

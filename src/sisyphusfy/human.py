@@ -484,16 +484,22 @@ def _execute_loop(
 
 
 def print_verification_log(result) -> None:
-    """Print the saved verification diagnostics when the user asks for them."""
-    evidence = result.verification
+    """Print the saved diagnostics when the user asks for them.
+
+    A run that stopped on the agent keeps agent diagnostics and no verification
+    evidence; reporting "none captured" there would contradict the inspect
+    instruction printed beside the agent log path.
+    """
+    evidence = result.verification or getattr(result, "agent_evidence", None)
+    label = "verification" if result.verification is not None else "agent"
     if evidence is None or not evidence.log_path:
         print("no verification diagnostics were captured")
         return
     text = read_verification_log(evidence.log_path)
     if text is None:
-        print(f"verification log is missing: {evidence.log_path}")
+        print(f"{label} log is missing: {evidence.log_path}")
         return
-    print(f"verification diagnostics: {evidence.log_path}")
+    print(f"{label} diagnostics: {evidence.log_path}")
     print(text, end="" if text.endswith("\n") else "\n")
 
 
@@ -548,6 +554,10 @@ def _print_human_result(
     elif reason == "verification_failed":
         _print_verifier_status(result, "failed")
         print("resume with: sisyphusfy resume")
+    elif reason == "agent_failed":
+        _print_agent_failure(result)
+        print("stopped: agent_failed")
+        print("resume with: sisyphusfy resume")
     elif reason == "timeout":
         _print_timeout(result, config)
         print("resume with: sisyphusfy resume")
@@ -589,6 +599,31 @@ def _timeout_tail(evidence) -> list[str]:
     stream = f"{evidence.stdout or ''}{evidence.stderr or ''}"
     lines = [line.strip() for line in stream.splitlines() if line.strip()]
     return [line[:TIMEOUT_TAIL_CHARS] for line in lines[-TIMEOUT_TAIL_LINES:]]
+
+
+def _print_agent_failure(result) -> None:
+    """Report the failed agent, any recovered error, and its diagnostics."""
+    evidence = result.agent_evidence
+    if evidence is None:
+        print("[agent] failed.")
+        return
+
+    command = Path(evidence.command[0]).name if evidence.command else "agent"
+    exit_status = "?" if evidence.exit_status is None else str(evidence.exit_status)
+    print(f"[agent] failed: {command} exited with code {exit_status}")
+
+    error = result.agent_error
+    detail = error.message or error.name if error is not None else None
+    if detail:
+        print(f"[agent] error: {detail}")
+    if error is not None and error.reference:
+        print(f"[agent] reference: {error.reference}")
+
+    if evidence.log_path:
+        print(f"[agent] diagnostics: {evidence.log_path}")
+        print("[agent] inspect with: sisyphusfy resume --verbose")
+    else:
+        print("[agent] diagnostics: not written")
 
 
 def _print_verifier_status(result, outcome: str) -> None:

@@ -6,7 +6,7 @@ loop engine. Both are protocols with a registry (agents) or a resolver
 
 ## The `AgentAdapter` protocol
 
-`sisyphusfy.adapters.AgentAdapter` is a `runtime_checkable` `Protocol` with three
+`sisyphusfy.adapters.AgentAdapter` is a `runtime_checkable` `Protocol` with four
 methods:
 
 ```python
@@ -14,6 +14,7 @@ class AgentAdapter(Protocol):
     def build_command(self, working_directory: str, prompt: str | None = None) -> list[str]: ...
     def supports_model(self, model: str) -> bool: ...
     def classify_failure(self, exit_status: int, stderr: str) -> FailureClass: ...
+    def parse_error(self, output: str) -> AgentError | None: ...
 ```
 
 ### `build_command(working_directory, prompt)`
@@ -44,14 +45,50 @@ Map a finished process to a `FailureClass`:
 |----------------|---------|---------------|
 | `RETRYABLE_PROVIDER` | Provider-side failure (quota, rate limit, `429`, `502`, `503`, overload, capacity) | Continue with the next model in the chain |
 | `RETRYABLE_PROCESS` | Process-level failure (`exit_status == -1` or `> 128`) | Continue with the next model |
-| `NON_RETRYABLE` | Task-level failure | Stop with `models_exhausted` |
+| `NON_RETRYABLE` | Task-level failure | Stop with `agent_failed`; the chain is not advanced |
 
 The built-in adapters treat these substrings in `stderr` as provider failures:
 `quota`, `rate_limit`, `rate limit`, `429`, `503`, `502`, `provider`,
 `overloaded`, `capacity`.
 
 Exhausting every model raises `ModelChainExhausted`, which the loop reports as
-`models_exhausted` with the list of attempted models.
+`models_exhausted` with the list of attempted models. That result is reserved
+for the case where **every** model failed retryably; a single non-retryable
+failure stops the iteration as `agent_failed` without trying the next model.
+
+### `parse_error(output)`
+
+Recover a structured error from one finished agent run so the loop can report
+it. `output` is the agent's combined stdout and stderr. Return an `AgentError`
+with the recovered `name`, `message`, and `reference`, or `None` when the output
+carries no recognizable error.
+
+The built-in adapters share `sisyphusfy.adapters.parse_error_envelope`, which
+scans for the first balanced JSON object carrying a `name` and reads the message
+from `data.message` and the reference from `data.ref`:
+
+```text
+Error: {
+"name": "UnknownError",
+"data": {
+"message": "Unexpected server error. Check server logs for details.",
+"ref": "err_cbece906"
+}
+}
+```
+
+Rules:
+
+- Parsing is best-effort and MUST NOT raise. Anything unrecognized returns
+  `None`; the loop still stops on the exit status and reports the diagnostics.
+- Read the whole combined output: agents write errors to either stream and
+  often span several lines.
+- Return only what the agent actually reported. Do not invent a message.
+
+The loop calls `parse_error` defensively, so an adapter that does not implement
+it still works and simply reports no structured error. Because the protocol is
+`runtime_checkable`, omitting the method does mean the adapter no longer
+satisfies `isinstance(adapter, AgentAdapter)`.
 
 ## Built-in adapters
 
@@ -69,8 +106,12 @@ Exhausting every model raises `ModelChainExhausted`, which the loop reports as
 `build_command` with the current model, then inspects the result:
 
 1. exit status `0` ends the iteration successfully;
-2. `classify_failure` decides whether the next model is tried;
+2. a non-retryable failure stops the iteration with `agent_failed` and does not
+   advance the chain; a retryable failure moves to the next model;
 3. a model rejected by `supports_model` is skipped, not failed.
+
+A non-zero exit status always stops the iteration. Verification runs only after
+an iteration exits `0`, so a failed agent is never verified.
 
 The `--model` flag is appended only when the adapter reports support and the
 command does not already carry `--model` or `-m`; an existing flag is rewritten
@@ -102,6 +143,10 @@ class MyAgent:
         if "quota" in stderr.lower():
             return FailureClass.RETRYABLE_PROVIDER
         return FailureClass.NON_RETRYABLE
+
+    def parse_error(self, output: str):
+        from sisyphusfy.adapters import parse_error_envelope
+        return parse_error_envelope(output)
 
 
 registry = AdapterRegistry()

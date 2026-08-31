@@ -153,5 +153,8 @@ class TestBlockedStopping:
         )
 
         result = run_loop(config)
-        assert result.stop_reason == LoopStopReason.UNCHANGED_STATE
+        assert result.stop_reason == LoopStopReason.AGENT_FAILED
         assert result.iterations == 1
+        assert result.agent_error is None
+        assert result.agent_evidence is not None
+        assert result.agent_evidence.exit_status == 1

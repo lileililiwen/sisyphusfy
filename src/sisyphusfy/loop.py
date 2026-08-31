@@ -13,7 +13,7 @@ from sisyphusfy.adapters import (
     AdapterConfig,
     AdapterError,
     AgentAdapter,
-    FailureClass,
+    AgentError,
     ModelChainExhausted,
     resolve_adapter,
     try_fallback,
@@ -52,6 +52,7 @@ class LoopStopReason(str, Enum):
     TIMEOUT = "timeout"
     INTERRUPTED = "interrupted"
     BLOCKED = "blocked"
+    AGENT_FAILED = "agent_failed"
     UNCHANGED_STATE = "unchanged_state"
     VERIFICATION_FAILED = "verification_failed"
     MODELS_EXHAUSTED = "models_exhausted"
@@ -222,6 +223,7 @@ class LoopResult:
     completion_pipeline_result: CompletionPipelineResult | None = None
     verification: VerificationEvidence | None = None
     agent_evidence: VerificationEvidence | None = None
+    agent_error: AgentError | None = None
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -247,6 +249,8 @@ class LoopResult:
             d["verification"] = self.verification.to_dict()
         if self.agent_evidence:
             d["agent_evidence"] = self.agent_evidence.to_dict()
+        if self.agent_error:
+            d["agent_error"] = self.agent_error.to_dict()
         return d
 
 
@@ -444,6 +448,8 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
         result: RunResult,
         iteration: int,
         component: str = COMPONENT_VERIFY,
+        source: str | None = None,
+        detector: str | None = None,
     ) -> VerificationEvidence | None:
         """Persist full diagnostics and retain bounded evidence for the result."""
         if result.classification is Classification.DRY_RUN:
@@ -462,8 +468,8 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
             status=result.classification.value,
             timed_out=result.timed_out,
             duration_ms=result.duration_ms,
-            source=config.verification_source,
-            detector=config.verification_detector,
+            source=source if source is not None else config.verification_source,
+            detector=detector if detector is not None else config.verification_detector,
             log_path=log_path,
             stdout=stdout,
             stderr=stderr,
@@ -473,19 +479,30 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
         evidence[component] = item
         return item
 
-    def _agent_stop(reason: LoopStopReason, iteration: int, result: object) -> LoopResult:
+    def _agent_stop(
+        reason: LoopStopReason,
+        iteration: int,
+        result: object,
+        model_attempts: list[str] | None = None,
+        agent_error: AgentError | None = None,
+    ) -> LoopResult:
         """Stop after an agent run, keeping the diagnostics for that run."""
-        item = _record_evidence(result, iteration, COMPONENT_AGENT) if isinstance(
-            result, RunResult
-        ) else None
+        item = _record_evidence(
+            result,
+            iteration,
+            COMPONENT_AGENT,
+            source=COMPONENT_AGENT,
+            detector="",
+        ) if isinstance(result, RunResult) else None
         return LoopResult(
             stop_reason=reason,
             iterations=iteration,
             run_records=run_records,
             final_task_path=task_path,
             final_handoff_path=handoff_path,
-            model_attempts=all_model_attempts,
+            model_attempts=model_attempts if model_attempts is not None else all_model_attempts,
             agent_evidence=item,
+            agent_error=agent_error,
         )
 
     def _run_verification(iteration: int) -> LoopResult | None:
@@ -632,12 +649,10 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
                     )
                     all_model_attempts.extend(attempts)
                 except ModelChainExhausted as exc:
-                    return LoopResult(
-                        stop_reason=LoopStopReason.MODELS_EXHAUSTED,
-                        iterations=i,
-                        run_records=run_records,
-                        final_task_path=task_path,
-                        final_handoff_path=handoff_path,
+                    return _agent_stop(
+                        LoopStopReason.MODELS_EXHAUSTED,
+                        i,
+                        exc.last_result,
                         model_attempts=exc.attempts,
                     )
             else:
@@ -669,21 +684,20 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
                     model_attempts=all_model_attempts,
                 )
 
+            # A non-zero exit is a failed agent run, whether or not a model
+            # chain is configured. Reaching this point with a chain means
+            # `try_fallback` already judged the failure non-retryable, because
+            # an all-retryable chain raises `ModelChainExhausted` above.
             raw_exit = getattr(result, "exit_status", None)
-            if raw_exit is not None and raw_exit != 0 and config.model_chain:
-                if adapter is not None:
-                    exit_cls = adapter.classify_failure(raw_exit, getattr(result, "stderr", "") or "")
-                else:
-                    exit_cls = FailureClass.NON_RETRYABLE
-                if exit_cls == FailureClass.NON_RETRYABLE:
-                    return LoopResult(
-                        stop_reason=LoopStopReason.MODELS_EXHAUSTED,
-                        iterations=i,
-                        run_records=run_records,
-                        final_task_path=task_path,
-                        final_handoff_path=handoff_path,
-                        model_attempts=all_model_attempts,
-                    )
+            if raw_exit is not None and raw_exit != 0:
+                return _agent_stop(
+                    LoopStopReason.AGENT_FAILED,
+                    i,
+                    result,
+                    agent_error=_parse_agent_error(
+                        adapter or _make_generic(config.agent_command), result
+                    ),
+                )
 
             # Verification runs exactly once per productive iteration and always
             # before completion is accepted or hooks are invoked.
@@ -737,6 +751,27 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
         final_handoff_path=handoff_path,
         model_attempts=all_model_attempts,
     )
+
+
+def _parse_agent_error(adapter: AgentAdapter, result: object) -> AgentError | None:
+    """Ask an adapter for the structured agent error, if it exposes one.
+
+    Third-party adapters written against the earlier protocol have no
+    `parse_error`, and an adapter that raises must not take the supervisor
+    down. Either case degrades to "no structured error" while the stop reason
+    still reflects the non-zero exit status.
+    """
+    parse = getattr(adapter, "parse_error", None)
+    if parse is None:
+        return None
+    combined = (
+        f"{getattr(result, 'stdout', '') or ''}\n"
+        f"{getattr(result, 'stderr', '') or ''}"
+    )
+    try:
+        return parse(combined)
+    except Exception:  # noqa: BLE001 - a third-party parser must not stop the loop
+        return None
 
 
 def _make_generic(command: list[str]) -> AgentAdapter:

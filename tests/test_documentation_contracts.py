@@ -69,7 +69,7 @@ class TestAdapterDocumentation:
 
     def test_protocol_methods_are_documented(self) -> None:
         content = ADAPTERS.read_text()
-        for method in ("build_command", "supports_model", "classify_failure"):
+        for method in ("build_command", "supports_model", "classify_failure", "parse_error"):
             assert method in content, f"adapter protocol method undocumented: {method}"
 
     def test_registration_path_is_documented(self) -> None:

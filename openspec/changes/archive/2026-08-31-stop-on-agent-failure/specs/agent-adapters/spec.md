@@ -1,22 +1,6 @@
-# agent-adapters Specification
+# agent-adapters Specification Deltas
 
-## Purpose
-Agent adapter selection, ordered model fallback chain for retryable failures,
-structured agent error reporting, and no conversation continuation.
-## Requirements
-### Requirement: Select a configured agent adapter
-
-The system MUST select an agent adapter by configuration and MUST reject unknown adapters before starting a process.
-
-#### Scenario: Known adapter
-
-- **WHEN** the configured adapter is registered
-- **THEN** the system MUST build its command using the configured working directory and prompt
-
-#### Scenario: Unknown adapter
-
-- **WHEN** no adapter matches the configured name
-- **THEN** the system MUST return a configuration error without starting a process
+## MODIFIED Requirements
 
 ### Requirement: Use an ordered model fallback chain
 
@@ -42,14 +26,7 @@ classified non-retryable.
   to the next model, and MUST reserve the exhausted-models result for the case
   where every configured model failed retryably
 
-### Requirement: Avoid conversation continuation
-
-The system MUST not pass a previous session identifier when starting a fallback attempt.
-
-#### Scenario: Fallback starts
-
-- **WHEN** a fallback model is selected
-- **THEN** the adapter MUST create an independent invocation that reads workspace state instead of restoring conversation history
+## ADDED Requirements
 
 ### Requirement: Report a structured agent error
 
@@ -78,4 +55,3 @@ raises, degrades to no structured error instead of failing the run.
   one
 - **THEN** `parse_error` MUST return `None` and the loop MUST still stop with an
   `agent_failed` result based on the exit status
-

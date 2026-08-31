@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-08-31
+goal: Stop the loop when an agent run fails instead of verifying a failed iteration
