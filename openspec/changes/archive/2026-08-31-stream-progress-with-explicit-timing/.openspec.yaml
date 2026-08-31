@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-08-31
+goal: Prevent silent waits and seconds-versus-minutes confusion during long
+  agent and verification runs

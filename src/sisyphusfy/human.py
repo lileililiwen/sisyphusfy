@@ -20,6 +20,13 @@ from sisyphusfy.config import (
     resolve_verification,
 )
 from sisyphusfy.diagnostics import read_verification_log
+from sisyphusfy.progress import StreamProgress, format_duration
+
+# How many trailing output lines a timeout report shows.
+TIMEOUT_TAIL_LINES = 5
+
+# How many characters of each trailing line a timeout report shows.
+TIMEOUT_TAIL_CHARS = 200
 
 
 def cmd_init(project_dir: str = ".", force: bool = False, json_output: bool = False) -> int:
@@ -451,6 +458,8 @@ def _execute_loop(
         completion_hooks=completion_hooks,
         dry_run=False,
         workflow_config=workflow_config,
+        # Progress is streamed for human output only; JSON stays machine-readable.
+        progress=None if json_output else StreamProgress(stream=sys.stderr),
     )
 
     result = run_loop(loop_config)
@@ -540,13 +549,46 @@ def _print_human_result(
         _print_verifier_status(result, "failed")
         print("resume with: sisyphusfy resume")
     elif reason == "timeout":
-        if result.verification is not None and result.verification.timed_out:
-            _print_verifier_status(result, "timed out")
-        else:
-            print("agent timed out.")
+        _print_timeout(result, config)
+        print("resume with: sisyphusfy resume")
+    elif reason == "interrupted":
+        print("interrupted. no durable state was changed by the supervisor.")
+        if result.final_task_path:
+            print(f"task state: {result.final_task_path}")
+        if result.final_handoff_path:
+            print(f"handoff: {result.final_handoff_path}")
         print("resume with: sisyphusfy resume")
     else:
         print(f"stopped: {reason}")
+
+
+def _print_timeout(result, config: SisyphusConfig) -> None:
+    """Report the timed-out component, its limit, its output, and its log."""
+    verification = result.verification
+    if verification is not None and verification.timed_out:
+        _print_timeout_detail("verify", verification, config.verification_timeout)
+    elif result.agent_evidence is not None:
+        _print_timeout_detail("agent", result.agent_evidence, config.agent_timeout)
+    else:
+        print(f"agent timed out after {format_duration(config.agent_timeout)}.")
+
+
+def _print_timeout_detail(component: str, evidence, limit: float) -> None:
+    print(f"{component} timed out after {format_duration(limit)}: {' '.join(evidence.command)}")
+    for line in _timeout_tail(evidence):
+        print(f"  {line}")
+    if evidence.log_path:
+        print(f"  diagnostics: {evidence.log_path}")
+        print("  inspect with: sisyphusfy resume --verbose")
+    else:
+        print("  diagnostics: not written")
+
+
+def _timeout_tail(evidence) -> list[str]:
+    """Return the last lines of captured output, bounded for display."""
+    stream = f"{evidence.stdout or ''}{evidence.stderr or ''}"
+    lines = [line.strip() for line in stream.splitlines() if line.strip()]
+    return [line[:TIMEOUT_TAIL_CHARS] for line in lines[-TIMEOUT_TAIL_LINES:]]
 
 
 def _print_verifier_status(result, outcome: str) -> None:

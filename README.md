@@ -208,6 +208,43 @@ saved streams.
 A passing verification command is evidence that the command passed. It is not a
 browser, API, database, or production smoke test unless the command is one.
 
+## Live progress and timing
+
+Long agent and verification commands stream their output while they run instead
+of appearing only after they exit. Each line is tagged with the component that
+produced it:
+
+```text
+[agent] reading openspec/changes/my-change/tasks.md
+[verify] compiling module 1
+[verify] no output for 15s (elapsed 1m 12s)
+```
+
+Rules:
+
+- **Labels.** Progress lines are tagged `[agent]` or `[verify]`.
+- **Heartbeats.** When a subprocess produces no output for the heartbeat
+  interval (15s by default), Sisyphusfy prints how long it has been quiet and
+  how long it has been running. A heartbeat means the process produced no
+  output; it does not prove the process is healthy.
+- **Timing format.** Every elapsed and timeout value names its units:
+  durations under one minute print as `42s`, longer durations print as
+  `1m 12s`, and zero prints as `0s`. No value is ever a bare number.
+- **Timeouts.** When a subprocess reaches its limit, Sisyphusfy prints the
+  component, the limit with explicit units, the last captured output, and the
+  diagnostic log path immediately, followed by the resume instruction.
+- **Interruption.** Ctrl-C stops the child, reports an `interrupted` result, and
+  leaves task and handoff files exactly as they are. Archive and commit hooks do
+  not run after an interruption.
+- **Streams.** Progress is written to stderr so the concise human result on
+  stdout stays clean and `--json` output stays valid JSON. JSON never contains
+  progress lines; it carries structured results, diagnostic paths, and bounded
+  captured streams.
+
+Streaming does not relax any boundary: output is still captured, timeout
+enforcement still applies, commands are still argument lists rather than shell
+strings, and retained output stays bounded.
+
 ## Documentation
 
 | Document | Contents |

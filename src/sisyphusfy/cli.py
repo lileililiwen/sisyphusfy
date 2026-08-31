@@ -4,9 +4,13 @@ import argparse
 import json
 import sys
 
+from sisyphusfy.progress import StreamProgress
 from sisyphusfy.runner import run_agent
 
 HIGH_LEVEL_SUBCOMMANDS = {"init", "run", "resume", "status", "doctor"}
+
+# Conventional exit status for a command stopped by an interrupt.
+INTERRUPTED_EXIT_STATUS = 130
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -492,6 +496,8 @@ def _run_loop(argv: list[str] | None) -> None:
         completion_hooks=completion_hooks,
         dry_run=args.dry_run,
         workflow_config=workflow_config,
+        # Progress is streamed for human output only; JSON stays machine-readable.
+        progress=None if args.output_json else StreamProgress(stream=sys.stderr),
     )
 
     result = run_loop(config)
@@ -635,17 +641,21 @@ def main(argv: list[str] | None = None) -> None:
     if argv is None:
         argv = sys.argv[1:]
 
-    if argv and argv[0] in ("-h", "--help") and len(argv) == 1:
-        _print_top_level_help()
-        sys.exit(0)
+    try:
+        if argv and argv[0] in ("-h", "--help") and len(argv) == 1:
+            _print_top_level_help()
+            sys.exit(0)
 
-    if argv and argv[0] in _SUBCOMMAND_HANDLERS:
-        handler = _SUBCOMMAND_HANDLERS[argv[0]]
-        handler(argv[1:])
-    elif argv and argv[0] == "loop":
-        _run_loop(argv)
-    else:
-        _run_single(argv)
+        if argv and argv[0] in _SUBCOMMAND_HANDLERS:
+            handler = _SUBCOMMAND_HANDLERS[argv[0]]
+            handler(argv[1:])
+        elif argv and argv[0] == "loop":
+            _run_loop(argv)
+        else:
+            _run_single(argv)
+    except KeyboardInterrupt:
+        print("\ninterrupted", file=sys.stderr)
+        sys.exit(INTERRUPTED_EXIT_STATUS)
 
 
 if __name__ == "__main__":

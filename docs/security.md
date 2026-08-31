@@ -26,7 +26,12 @@ enable them, exactly as you would review a `Makefile` target or a CI step.
   selected with `--project-dir`. Relative paths resolve against that directory,
   so a project cannot reach outside itself by naming a relative path.
 - **Timeouts.** Every subprocess has a timeout. A timeout is a structured stop
-  reason (`timeout`), not a silent kill.
+  reason (`timeout`), not a silent kill. The timeout report names the component,
+  the limit with explicit units, and the diagnostic log path.
+- **Safe interruption.** Ctrl-C stops the running child, terminates it, and
+  returns a structured `interrupted` result. Task and handoff files are left
+  untouched and archive and commit hooks are skipped, so an interrupt can never
+  publish work that was not verified.
 - **Verification before trust.** Completion is accepted only after verification
   passes, and verification runs at most once per productive iteration. Archive
   and commit hooks run only after both.
@@ -49,10 +54,14 @@ enable them, exactly as you would review a `Makefile` target or a CI step.
   environment values. Default output and JSON stay concise; full streams require
   `--verbose` or reading the log.
 - **Structured failures.** Failures are reported as data (`verification_failed`,
-  `blocked`, `timeout`, `command_not_found`, `adapter_error`) instead of being
-  retried blindly or surfacing as an unhandled exception. A missing agent,
-  verification, or completion command names the command that could not be
-  executed.
+  `blocked`, `timeout`, `command_not_found`, `adapter_error`, `interrupted`)
+  instead of being retried blindly or surfacing as an unhandled exception. A
+  missing agent, verification, or completion command names the command that
+  could not be executed.
+- **Progress stays out of the result.** Live progress and heartbeats are written
+  to stderr, so the human result and `--json` output on stdout remain the
+  authoritative record. Streaming does not disable capture, timeout enforcement,
+  argument isolation, or output bounds.
 
 ## Review checklist
 

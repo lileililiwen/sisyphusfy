@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
@@ -27,6 +28,13 @@ from sisyphusfy.hooks import (
     HookConfig,
     run_completion_pipeline,
 )
+from sisyphusfy.progress import (
+    COMPONENT_AGENT,
+    COMPONENT_VERIFY,
+    DEFAULT_HEARTBEAT_SECONDS,
+    ProgressSink,
+    progress_callbacks,
+)
 from sisyphusfy.result import Classification, RunResult
 from sisyphusfy.runner import run_agent
 from sisyphusfy.workflows import (
@@ -42,6 +50,7 @@ class LoopStopReason(str, Enum):
     COMPLETE = "complete"
     MAX_ITERATIONS = "max_iterations"
     TIMEOUT = "timeout"
+    INTERRUPTED = "interrupted"
     BLOCKED = "blocked"
     UNCHANGED_STATE = "unchanged_state"
     VERIFICATION_FAILED = "verification_failed"
@@ -151,6 +160,8 @@ class LoopConfig:
     workflow_adapter: WorkflowAdapter | None = None
     workflow_config: WorkflowConfig | None = None
     blocked_markers: list[str] = field(default_factory=lambda: list(BLOCKED_MARKERS))
+    progress: ProgressSink | None = None
+    heartbeat_interval: float = DEFAULT_HEARTBEAT_SECONDS
 
 
 @dataclass
@@ -210,6 +221,7 @@ class LoopResult:
     adapter_error: str | None = None
     completion_pipeline_result: CompletionPipelineResult | None = None
     verification: VerificationEvidence | None = None
+    agent_evidence: VerificationEvidence | None = None
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -233,6 +245,8 @@ class LoopResult:
             d["completion_pipeline_result"] = self.completion_pipeline_result.to_dict()
         if self.verification:
             d["verification"] = self.verification.to_dict()
+        if self.agent_evidence:
+            d["agent_evidence"] = self.agent_evidence.to_dict()
         return d
 
 
@@ -333,6 +347,9 @@ def _run_iteration(
     timeout: float,
     model: str | None = None,
     dry_run: bool = False,
+    on_output: Callable[[str], None] | None = None,
+    on_heartbeat: Callable[[float, float], None] | None = None,
+    heartbeat_interval: float = DEFAULT_HEARTBEAT_SECONDS,
 ) -> object:
     env: dict[str, str] = {}
     if model:
@@ -360,6 +377,9 @@ def _run_iteration(
         timeout=timeout,
         env=env if env else None,
         dry_run=dry_run,
+        on_output=on_output,
+        on_heartbeat=on_heartbeat,
+        heartbeat_interval=heartbeat_interval,
     )
 
 
@@ -367,8 +387,8 @@ def run_loop(config: LoopConfig) -> LoopResult:
     """Run the loop and attach the evidence from its last verification."""
     evidence: dict[str, VerificationEvidence] = {}
     result = _run_loop(config, evidence)
-    if result.verification is None and "last" in evidence:
-        result.verification = evidence["last"]
+    if result.verification is None and COMPONENT_VERIFY in evidence:
+        result.verification = evidence[COMPONENT_VERIFY]
     return result
 
 
@@ -417,11 +437,17 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
     )
 
     run_id = make_run_id()
+    agent_cbs = progress_callbacks(config.progress, COMPONENT_AGENT)
+    verify_cbs = progress_callbacks(config.progress, COMPONENT_VERIFY)
 
-    def _record_evidence(result: RunResult, iteration: int) -> None:
+    def _record_evidence(
+        result: RunResult,
+        iteration: int,
+        component: str = COMPONENT_VERIFY,
+    ) -> VerificationEvidence | None:
         """Persist full diagnostics and retain bounded evidence for the result."""
         if result.classification is Classification.DRY_RUN:
-            return
+            return None
         stdout, stdout_truncated = bound_output(result.stdout or "")
         stderr, stderr_truncated = bound_output(result.stderr or "")
         log_path: str | None = None
@@ -444,20 +470,48 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
             stdout_truncated=stdout_truncated,
             stderr_truncated=stderr_truncated,
         )
-        evidence["last"] = item
+        evidence[component] = item
         return item
+
+    def _agent_stop(reason: LoopStopReason, iteration: int, result: object) -> LoopResult:
+        """Stop after an agent run, keeping the diagnostics for that run."""
+        item = _record_evidence(result, iteration, COMPONENT_AGENT) if isinstance(
+            result, RunResult
+        ) else None
+        return LoopResult(
+            stop_reason=reason,
+            iterations=iteration,
+            run_records=run_records,
+            final_task_path=task_path,
+            final_handoff_path=handoff_path,
+            model_attempts=all_model_attempts,
+            agent_evidence=item,
+        )
 
     def _run_verification(iteration: int) -> LoopResult | None:
         """Run verification once. Returns a failure result, or None on success."""
         if not config.verification_command:
             return None
+        on_output, on_heartbeat = verify_cbs
         vr = run_agent(
             config.verification_command,
             working_directory=working_directory,
             timeout=config.verification_timeout,
             dry_run=config.dry_run,
+            on_output=on_output,
+            on_heartbeat=on_heartbeat,
+            heartbeat_interval=config.heartbeat_interval,
         )
         _record_evidence(vr, iteration)
+        if getattr(vr, "interrupted", False):
+            return LoopResult(
+                stop_reason=LoopStopReason.INTERRUPTED,
+                iterations=iteration,
+                run_records=run_records,
+                final_task_path=task_path,
+                final_handoff_path=handoff_path,
+                model_attempts=all_model_attempts,
+            )
         if vr.timed_out:
             return LoopResult(
                 stop_reason=LoopStopReason.TIMEOUT,
@@ -539,88 +593,75 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
             return verification_failure
         return _complete(0)
 
-    prev_state = _snapshot(task_path, handoff_path)
+    completed_iteration = 0
+    try:
+        prev_state = _snapshot(task_path, handoff_path)
 
-    for i in range(1, config.max_iterations + 1):
-        prompt = _render_prompt(
-            config.prompt_template,
-            task_path=task_path,
-            handoff_path=handoff_path or "",
-        )
-
-        def _run_with_model(model: str | None = None, p: str = prompt) -> object:
-            return _run_iteration(
-                adapter,
-                config.agent_command,
-                working_directory,
-                p,
-                config.agent_timeout,
-                model=model,
-                dry_run=config.dry_run,
+        for i in range(1, config.max_iterations + 1):
+            completed_iteration = i
+            prompt = _render_prompt(
+                config.prompt_template,
+                task_path=task_path,
+                handoff_path=handoff_path or "",
             )
 
-        if config.model_chain:
-            fallback_adapter = adapter or _make_generic(config.agent_command)
-            try:
-                result, attempts = try_fallback(
-                    fallback_adapter,
-                    config.model_chain,
+            def _run_with_model(model: str | None = None, p: str = prompt) -> object:
+                on_output, on_heartbeat = agent_cbs
+                return _run_iteration(
+                    adapter,
+                    config.agent_command,
                     working_directory,
-                    prompt,
-                    _run_with_model,
+                    p,
+                    config.agent_timeout,
+                    model=model,
+                    dry_run=config.dry_run,
+                    on_output=on_output,
+                    on_heartbeat=on_heartbeat,
+                    heartbeat_interval=config.heartbeat_interval,
                 )
-                all_model_attempts.extend(attempts)
-            except ModelChainExhausted as exc:
-                return LoopResult(
-                    stop_reason=LoopStopReason.MODELS_EXHAUSTED,
-                    iterations=i,
-                    run_records=run_records,
-                    final_task_path=task_path,
-                    final_handoff_path=handoff_path,
-                    model_attempts=exc.attempts,
-                )
-        else:
-            result = _run_with_model(model=adapter.model if adapter else None)
 
-        rec = RunRecord(iteration=i, result=result, prompt=prompt)
-        run_records.append(rec)
-
-        if len(run_records) > config.max_run_records:
-            run_records = run_records[-config.max_run_records:]
-
-        if getattr(result, "classification", None) is Classification.COMMAND_NOT_FOUND:
-            missing = result.command[0] if getattr(result, "command", None) else ""
-            return _command_failure(f"agent command not found: {missing}", i)
-
-        if result.timed_out:
-            return LoopResult(
-                stop_reason=LoopStopReason.TIMEOUT,
-                iterations=i,
-                run_records=run_records,
-                final_task_path=task_path,
-                final_handoff_path=handoff_path,
-                model_attempts=all_model_attempts,
-            )
-
-        if _is_blocked(result, config.blocked_markers):
-            return LoopResult(
-                stop_reason=LoopStopReason.BLOCKED,
-                iterations=i,
-                run_records=run_records,
-                final_task_path=task_path,
-                final_handoff_path=handoff_path,
-                model_attempts=all_model_attempts,
-            )
-
-        raw_exit = getattr(result, "exit_status", None)
-        if raw_exit is not None and raw_exit != 0 and config.model_chain:
-            if adapter is not None:
-                exit_cls = adapter.classify_failure(raw_exit, getattr(result, "stderr", "") or "")
+            if config.model_chain:
+                fallback_adapter = adapter or _make_generic(config.agent_command)
+                try:
+                    result, attempts = try_fallback(
+                        fallback_adapter,
+                        config.model_chain,
+                        working_directory,
+                        prompt,
+                        _run_with_model,
+                    )
+                    all_model_attempts.extend(attempts)
+                except ModelChainExhausted as exc:
+                    return LoopResult(
+                        stop_reason=LoopStopReason.MODELS_EXHAUSTED,
+                        iterations=i,
+                        run_records=run_records,
+                        final_task_path=task_path,
+                        final_handoff_path=handoff_path,
+                        model_attempts=exc.attempts,
+                    )
             else:
-                exit_cls = FailureClass.NON_RETRYABLE
-            if exit_cls == FailureClass.NON_RETRYABLE:
+                result = _run_with_model(model=adapter.model if adapter else None)
+
+            rec = RunRecord(iteration=i, result=result, prompt=prompt)
+            run_records.append(rec)
+
+            if len(run_records) > config.max_run_records:
+                run_records = run_records[-config.max_run_records:]
+
+            if getattr(result, "classification", None) is Classification.COMMAND_NOT_FOUND:
+                missing = result.command[0] if getattr(result, "command", None) else ""
+                return _command_failure(f"agent command not found: {missing}", i)
+
+            if getattr(result, "interrupted", False):
+                return _agent_stop(LoopStopReason.INTERRUPTED, i, result)
+
+            if result.timed_out:
+                return _agent_stop(LoopStopReason.TIMEOUT, i, result)
+
+            if _is_blocked(result, config.blocked_markers):
                 return LoopResult(
-                    stop_reason=LoopStopReason.MODELS_EXHAUSTED,
+                    stop_reason=LoopStopReason.BLOCKED,
                     iterations=i,
                     run_records=run_records,
                     final_task_path=task_path,
@@ -628,39 +669,65 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
                     model_attempts=all_model_attempts,
                 )
 
-        # Verification runs exactly once per productive iteration and always
-        # before completion is accepted or hooks are invoked.
-        verification_failure = _run_verification(i)
-        if verification_failure is not None:
-            return verification_failure
+            raw_exit = getattr(result, "exit_status", None)
+            if raw_exit is not None and raw_exit != 0 and config.model_chain:
+                if adapter is not None:
+                    exit_cls = adapter.classify_failure(raw_exit, getattr(result, "stderr", "") or "")
+                else:
+                    exit_cls = FailureClass.NON_RETRYABLE
+                if exit_cls == FailureClass.NON_RETRYABLE:
+                    return LoopResult(
+                        stop_reason=LoopStopReason.MODELS_EXHAUSTED,
+                        iterations=i,
+                        run_records=run_records,
+                        final_task_path=task_path,
+                        final_handoff_path=handoff_path,
+                        model_attempts=all_model_attempts,
+                    )
 
-        try:
-            outcome = _evaluate_completion(reload=True)
-        except (CompletionCheckError, WorkflowError) as exc:
-            return _command_failure(str(exc), i)
-        if outcome is CompletionOutcome.DRY_RUN:
-            return LoopResult(
-                stop_reason=LoopStopReason.DRY_RUN,
-                iterations=i,
-                run_records=run_records,
-                final_task_path=task_path,
-                final_handoff_path=handoff_path,
-                model_attempts=all_model_attempts,
-            )
-        if outcome is CompletionOutcome.COMPLETE:
-            return _complete(i)
+            # Verification runs exactly once per productive iteration and always
+            # before completion is accepted or hooks are invoked.
+            verification_failure = _run_verification(i)
+            if verification_failure is not None:
+                return verification_failure
 
-        curr_state = _snapshot(task_path, handoff_path)
-        if not _changed(prev_state, curr_state):
-            return LoopResult(
-                stop_reason=LoopStopReason.UNCHANGED_STATE,
-                iterations=i,
-                run_records=run_records,
-                final_task_path=task_path,
-                final_handoff_path=handoff_path,
-                model_attempts=all_model_attempts,
-            )
-        prev_state = curr_state
+            try:
+                outcome = _evaluate_completion(reload=True)
+            except (CompletionCheckError, WorkflowError) as exc:
+                return _command_failure(str(exc), i)
+            if outcome is CompletionOutcome.DRY_RUN:
+                return LoopResult(
+                    stop_reason=LoopStopReason.DRY_RUN,
+                    iterations=i,
+                    run_records=run_records,
+                    final_task_path=task_path,
+                    final_handoff_path=handoff_path,
+                    model_attempts=all_model_attempts,
+                )
+            if outcome is CompletionOutcome.COMPLETE:
+                return _complete(i)
+
+            curr_state = _snapshot(task_path, handoff_path)
+            if not _changed(prev_state, curr_state):
+                return LoopResult(
+                    stop_reason=LoopStopReason.UNCHANGED_STATE,
+                    iterations=i,
+                    run_records=run_records,
+                    final_task_path=task_path,
+                    final_handoff_path=handoff_path,
+                    model_attempts=all_model_attempts,
+                )
+            prev_state = curr_state
+
+    except KeyboardInterrupt:
+        return LoopResult(
+            stop_reason=LoopStopReason.INTERRUPTED,
+            iterations=completed_iteration,
+            run_records=run_records,
+            final_task_path=task_path,
+            final_handoff_path=handoff_path,
+            model_attempts=all_model_attempts,
+        )
 
     return LoopResult(
         stop_reason=LoopStopReason.MAX_ITERATIONS,

@@ -9,6 +9,7 @@ class Classification(str, Enum):
     SUCCESS = "success"
     FAILURE = "failure"
     TIMEOUT = "timeout"
+    INTERRUPTED = "interrupted"
     DRY_RUN = "dry_run"
     COMMAND_NOT_FOUND = "command_not_found"
 
@@ -22,6 +23,7 @@ class RunResult:
     stderr: str = ""
     duration_ms: float = 0.0
     timed_out: bool = False
+    interrupted: bool = False
     working_directory: str = ""
     prompt: str | None = None
     env: dict[str, str] = field(default_factory=dict)
@@ -36,6 +38,7 @@ class RunResult:
             "stderr": self.stderr,
             "duration_ms": self.duration_ms,
             "timed_out": self.timed_out,
+            "interrupted": self.interrupted,
             "working_directory": self.working_directory,
             "prompt": self.prompt,
             "env": self.env,
