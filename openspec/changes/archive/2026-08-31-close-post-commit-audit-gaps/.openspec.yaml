@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-08-31
+goal: Close the remaining post-commit audit gaps: completion-check working
+  directory, structured missing-command failures, and release version metadata
+  synchronization

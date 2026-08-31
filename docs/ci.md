@@ -8,7 +8,11 @@ a developer does and read either the exit status or `--json` output.
 | Result | Exit code |
 |--------|-----------|
 | `complete` | `0` |
-| anything else (`max_iterations`, `blocked`, `timeout`, `verification_failed`, `unchanged_state`, `models_exhausted`, `adapter_error`, `dry_run`) | `1` |
+| anything else (`max_iterations`, `blocked`, `timeout`, `verification_failed`, `command_not_found`, `unchanged_state`, `models_exhausted`, `adapter_error`, `dry_run`) | `1` |
+
+`command_not_found` is returned when a configured agent, verification, or
+completion command cannot be executed; the result names the missing command so a
+CI log can point at the fix.
 
 ## Preview gate: verify configuration without executing
 

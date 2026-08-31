@@ -89,6 +89,16 @@ jobs:
         with:
           path: artifacts
 
+      - name: Verify tag matches package version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(PYTHONPATH=src python -c 'import sisyphusfy; print(sisyphusfy.__version__)')"
+          if [ "$VERSION" != "$PKG_VERSION" ]; then
+            echo "refusing to publish: tag is v$VERSION but package version is $PKG_VERSION" >&2
+            exit 1
+          fi
+          echo "version ok: v$VERSION"
+
       - name: Generate checksums
         run: |
           VERSION="${GITHUB_REF_NAME#v}"

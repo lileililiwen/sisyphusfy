@@ -22,6 +22,7 @@ from sisyphusfy.hooks import (
     HookConfig,
     run_completion_pipeline,
 )
+from sisyphusfy.result import Classification
 from sisyphusfy.runner import run_agent
 from sisyphusfy.workflows import (
     WorkflowAdapter,
@@ -42,12 +43,17 @@ class LoopStopReason(str, Enum):
     MODELS_EXHAUSTED = "models_exhausted"
     ADAPTER_ERROR = "adapter_error"
     DRY_RUN = "dry_run"
+    COMMAND_NOT_FOUND = "command_not_found"
 
 
 class CompletionOutcome(str, Enum):
     HAS_WORK = "has_work"
     COMPLETE = "complete"
     DRY_RUN = "dry_run"
+
+
+class CompletionCheckError(Exception):
+    """A completion check command could not be executed."""
 
 
 @runtime_checkable
@@ -96,13 +102,22 @@ class ExternalCommandCompletion:
     def has_work(self, task_path: str) -> bool:
         if self.dry_run:
             return True
-        proc = subprocess.run(
-            self.check_command,
-            capture_output=True,
-            timeout=self.timeout,
-            check=False,
-            cwd=self.working_directory,
-        )
+        try:
+            proc = subprocess.run(
+                self.check_command,
+                capture_output=True,
+                timeout=self.timeout,
+                check=False,
+                cwd=self.working_directory,
+            )
+        except FileNotFoundError as exc:
+            raise CompletionCheckError(
+                f"completion check command not found: {self.check_command[0]}"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise CompletionCheckError(
+                f"completion check command timed out after {self.timeout}s"
+            ) from exc
         return proc.returncode != 0
 
 
@@ -233,6 +248,21 @@ def _scoped_workflow_config(
     )
 
 
+def _scoped_completion_strategy(
+    strategy: CompletionStrategy | None,
+    working_directory: str,
+) -> CompletionStrategy | None:
+    """Run an unscoped external completion check in the loop working directory."""
+    if isinstance(strategy, ExternalCommandCompletion) and strategy.working_directory in ("", "."):
+        return ExternalCommandCompletion(
+            check_command=strategy.check_command,
+            timeout=strategy.timeout,
+            working_directory=working_directory,
+            dry_run=strategy.dry_run,
+        )
+    return strategy
+
+
 def _hooks_with_directory(
     hooks: list[HookConfig],
     working_directory: str,
@@ -324,6 +354,9 @@ def run_loop(config: LoopConfig) -> LoopResult:
     run_records: list[RunRecord] = []
     all_model_attempts: list[str] = []
     hooks = _hooks_with_directory(config.completion_hooks, working_directory)
+    completion_strategy = _scoped_completion_strategy(
+        config.completion_strategy, working_directory
+    )
 
     def _run_verification(iteration: int) -> LoopResult | None:
         """Run verification once. Returns a failure result, or None on success."""
@@ -344,6 +377,11 @@ def run_loop(config: LoopConfig) -> LoopResult:
                 final_handoff_path=handoff_path,
                 model_attempts=all_model_attempts,
             )
+        if vr.classification is Classification.COMMAND_NOT_FOUND:
+            return _command_failure(
+                f"verification command not found: {vr.command[0] if vr.command else ''}",
+                iteration,
+            )
         if vr.classification.value not in ("success", "dry_run"):
             return LoopResult(
                 stop_reason=LoopStopReason.VERIFICATION_FAILED,
@@ -357,10 +395,10 @@ def run_loop(config: LoopConfig) -> LoopResult:
 
     def _evaluate_completion(reload: bool) -> CompletionOutcome:
         """Decide whether work remains without executing commands under dry-run."""
-        if config.completion_strategy is not None:
-            if config.dry_run and completion_strategy_runs_commands(config.completion_strategy):
+        if completion_strategy is not None:
+            if config.dry_run and completion_strategy_runs_commands(completion_strategy):
                 return CompletionOutcome.DRY_RUN
-            has_work = config.completion_strategy.has_work(task_path)
+            has_work = completion_strategy.has_work(task_path)
         elif workflow_adapter is not None:
             if reload:
                 workflow_adapter.reload()
@@ -370,6 +408,17 @@ def run_loop(config: LoopConfig) -> LoopResult:
         else:
             return CompletionOutcome.HAS_WORK
         return CompletionOutcome.HAS_WORK if has_work else CompletionOutcome.COMPLETE
+
+    def _command_failure(message: str, iteration: int) -> LoopResult:
+        return LoopResult(
+            stop_reason=LoopStopReason.COMMAND_NOT_FOUND,
+            iterations=iteration,
+            run_records=run_records,
+            final_task_path=task_path,
+            final_handoff_path=handoff_path,
+            model_attempts=all_model_attempts,
+            adapter_error=message,
+        )
 
     def _complete(iteration: int) -> LoopResult:
         pipeline_result = run_completion_pipeline(hooks, dry_run=config.dry_run) if hooks else None
@@ -383,7 +432,10 @@ def run_loop(config: LoopConfig) -> LoopResult:
             completion_pipeline_result=pipeline_result,
         )
 
-    outcome = _evaluate_completion(reload=False)
+    try:
+        outcome = _evaluate_completion(reload=False)
+    except (CompletionCheckError, WorkflowError) as exc:
+        return _command_failure(str(exc), 0)
     if outcome is CompletionOutcome.DRY_RUN:
         return LoopResult(
             stop_reason=LoopStopReason.DRY_RUN,
@@ -446,6 +498,10 @@ def run_loop(config: LoopConfig) -> LoopResult:
         if len(run_records) > config.max_run_records:
             run_records = run_records[-config.max_run_records:]
 
+        if getattr(result, "classification", None) is Classification.COMMAND_NOT_FOUND:
+            missing = result.command[0] if getattr(result, "command", None) else ""
+            return _command_failure(f"agent command not found: {missing}", i)
+
         if result.timed_out:
             return LoopResult(
                 stop_reason=LoopStopReason.TIMEOUT,
@@ -488,7 +544,10 @@ def run_loop(config: LoopConfig) -> LoopResult:
         if verification_failure is not None:
             return verification_failure
 
-        outcome = _evaluate_completion(reload=True)
+        try:
+            outcome = _evaluate_completion(reload=True)
+        except (CompletionCheckError, WorkflowError) as exc:
+            return _command_failure(str(exc), i)
         if outcome is CompletionOutcome.DRY_RUN:
             return LoopResult(
                 stop_reason=LoopStopReason.DRY_RUN,

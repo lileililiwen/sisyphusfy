@@ -46,8 +46,10 @@
 
 ## Phase 5 — Public release
 
-- [x] Publish package and standalone binary distribution options.
+- [x] Provide package and standalone binary distribution options (sdist/wheel, PyInstaller binaries, npm launcher, POSIX and PowerShell installers).
 - [x] Document agent adapter authoring.
 - [x] Add end-to-end examples for Python, Rust, JavaScript, Flutter, and .NET projects.
 - [x] Add contribution guidelines and release automation.
+- [x] Synchronize release version metadata: the package version is the source of truth, and the npm manifest, npm launcher, and installers are verified against it.
+- [ ] Publish the package to PyPI from CI (sdist/wheel are built but never uploaded).
 - [ ] Publish the first stable release.

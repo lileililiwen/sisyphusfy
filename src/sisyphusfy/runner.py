@@ -7,6 +7,9 @@ from pathlib import Path
 
 from sisyphusfy.result import Classification, RunResult
 
+# Conventional shell exit status for a command that could not be executed.
+COMMAND_NOT_FOUND_EXIT_STATUS = 127
+
 
 def run_agent(
     command: list[str],
@@ -54,6 +57,17 @@ def run_agent(
         exit_status = proc.returncode
         stdout = proc.stdout.decode(errors="replace") if proc.stdout else ""
         stderr = proc.stderr.decode(errors="replace") if proc.stderr else ""
+    except FileNotFoundError as exc:
+        return RunResult(
+            command=command,
+            exit_status=COMMAND_NOT_FOUND_EXIT_STATUS,
+            classification=Classification.COMMAND_NOT_FOUND,
+            stderr=f"command not found: {command[0] if command else ''}",
+            working_directory=cwd,
+            prompt=prompt,
+            env=env or {},
+            error=str(exc),
+        )
     except subprocess.TimeoutExpired as exc:
         duration = (time.monotonic() - start) * 1000
         timed_out = True

@@ -10,6 +10,7 @@ class Classification(str, Enum):
     FAILURE = "failure"
     TIMEOUT = "timeout"
     DRY_RUN = "dry_run"
+    COMMAND_NOT_FOUND = "command_not_found"
 
 
 @dataclass
@@ -24,9 +25,10 @@ class RunResult:
     working_directory: str = ""
     prompt: str | None = None
     env: dict[str, str] = field(default_factory=dict)
+    error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "command": self.command,
             "exit_status": self.exit_status,
             "classification": self.classification.value,
@@ -38,3 +40,6 @@ class RunResult:
             "prompt": self.prompt,
             "env": self.env,
         }
+        if self.error:
+            d["error"] = self.error
+        return d

@@ -40,9 +40,11 @@ enable them, exactly as you would review a `Makefile` target or a CI step.
 - **Dry-run.** `--dry-run` executes nothing: no agent, no verification command,
   no external completion check, no workflow validation, and no hook. Review
   dry-run output before enabling anything that writes.
-- **Structured failures.** Failures are reported as data
-  (`verification_failed`, `blocked`, `timeout`, `adapter_error`) instead of being
-  retried blindly.
+- **Structured failures.** Failures are reported as data (`verification_failed`,
+  `blocked`, `timeout`, `command_not_found`, `adapter_error`) instead of being
+  retried blindly or surfacing as an unhandled exception. A missing agent,
+  verification, or completion command names the command that could not be
+  executed.
 
 ## Review checklist
 
