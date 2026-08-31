@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import re
+import shutil
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 if sys.version_info >= (3, 11):
@@ -223,12 +228,174 @@ def discover_openspec_change(project_dir: str = ".", change: str | None = None) 
     return None
 
 
-def find_verification_command(project_dir: str = ".") -> list[str] | None:
-    import shutil
+class VerificationSource(str, Enum):
+    """How a verification command was chosen."""
 
-    for candidate in ["pytest", "make test", "cargo test"]:
-        cmd = candidate.split()
-        if shutil.which(cmd[0]):
-            return cmd
+    CONFIGURED = "configured"
+    DISCOVERED = "discovered"
+    UNAVAILABLE = "unavailable"
 
+
+class VerificationDetectionError(Exception):
+    """A project marker exists but cannot be interpreted safely."""
+
+
+@dataclass
+class VerificationResolution:
+    """A verification command and the reason it was chosen."""
+
+    command: list[str] = field(default_factory=list)
+    source: VerificationSource = VerificationSource.UNAVAILABLE
+    detector: str = ""
+    detail: str = ""
+
+    @property
+    def available(self) -> bool:
+        return bool(self.command)
+
+    def to_dict(self) -> dict:
+        return {
+            "command": list(self.command),
+            "source": self.source.value,
+            "detector": self.detector,
+            "detail": self.detail,
+            "available": self.available,
+        }
+
+
+_ExecutableCheck = Callable[[str], bool]
+_Detector = Callable[[Path, _ExecutableCheck], list[str] | None]
+
+
+def _detect_dotnet(project: Path, available: _ExecutableCheck) -> list[str] | None:
+    if not available("dotnet"):
+        return None
+    solutions = sorted(p.name for p in project.glob("*.sln") if p.is_file())
+    if solutions:
+        return ["dotnet", "test", solutions[0]]
+    projects = sorted(p.name for p in project.glob("*.csproj") if p.is_file())
+    if projects:
+        return ["dotnet", "test", projects[0]]
     return None
+
+
+def _detect_rust(project: Path, available: _ExecutableCheck) -> list[str] | None:
+    if available("cargo") and (project / "Cargo.toml").is_file():
+        return ["cargo", "test"]
+    return None
+
+
+_PYTHON_MARKERS = ("pytest.ini", "pyproject.toml", "setup.cfg", "setup.py", "tox.ini")
+_PYTHON_TEST_DIRS = ("tests", "test")
+
+
+def _detect_python(project: Path, available: _ExecutableCheck) -> list[str] | None:
+    if not available("pytest"):
+        return None
+    if any((project / marker).is_file() for marker in _PYTHON_MARKERS):
+        return ["pytest"]
+    if any((project / directory).is_dir() for directory in _PYTHON_TEST_DIRS):
+        return ["pytest"]
+    return None
+
+
+def _detect_javascript(project: Path, available: _ExecutableCheck) -> list[str] | None:
+    manifest = project / "package.json"
+    if not manifest.is_file() or not available("npm"):
+        return None
+    try:
+        data = json.loads(manifest.read_text(errors="replace"))
+    except (OSError, ValueError) as exc:
+        raise VerificationDetectionError(f"package.json could not be read: {exc}") from exc
+    scripts = data.get("scripts") if isinstance(data, dict) else None
+    test_script = scripts.get("test") if isinstance(scripts, dict) else None
+    if isinstance(test_script, str) and test_script.strip():
+        return ["npm", "test"]
+    return None
+
+
+def _detect_flutter(project: Path, available: _ExecutableCheck) -> list[str] | None:
+    if available("flutter") and (project / "pubspec.yaml").is_file():
+        return ["flutter", "test"]
+    return None
+
+
+_MAKEFILE_NAMES = ("Makefile", "makefile", "GNUmakefile")
+_MAKE_TEST_TARGET = re.compile(r"^test\s*:", re.MULTILINE)
+
+
+def _detect_make(project: Path, available: _ExecutableCheck) -> list[str] | None:
+    """Select `make test` only when a Makefile declares a `test` target."""
+    if not available("make"):
+        return None
+    for name in _MAKEFILE_NAMES:
+        path = project / name
+        if not path.is_file():
+            continue
+        try:
+            content = path.read_text(errors="replace")
+        except OSError as exc:
+            raise VerificationDetectionError(f"{name} could not be read: {exc}") from exc
+        if _MAKE_TEST_TARGET.search(content):
+            return ["make", "test"]
+    return None
+
+
+# Ordered, deterministic precedence. The first detector whose project marker and
+# executable are both present wins; later ecosystems are never reached.
+DETECTORS: tuple[tuple[str, _Detector], ...] = (
+    ("dotnet", _detect_dotnet),
+    ("rust", _detect_rust),
+    ("python", _detect_python),
+    ("javascript", _detect_javascript),
+    ("flutter", _detect_flutter),
+    ("make", _detect_make),
+)
+
+
+def discover_verification_command(
+    project_dir: str = ".",
+    available: _ExecutableCheck | None = None,
+) -> VerificationResolution:
+    """Resolve a verification command from project markers.
+
+    Detection is read-only: it inspects files and executable availability and
+    never runs a candidate verifier.
+    """
+    project = Path(project_dir).resolve()
+    executable_available = available or (lambda name: shutil.which(name) is not None)
+
+    for name, detector in DETECTORS:
+        try:
+            command = detector(project, executable_available)
+        except VerificationDetectionError as exc:
+            # A marker exists but is unusable: stop instead of falling through
+            # to an unrelated ecosystem command.
+            return VerificationResolution(detector=name, detail=str(exc))
+        if command:
+            return VerificationResolution(
+                command=command,
+                source=VerificationSource.DISCOVERED,
+                detector=name,
+            )
+
+    return VerificationResolution(detail="no supported project markers found")
+
+
+def resolve_verification(
+    configured: list[str] | None,
+    project_dir: str = ".",
+    available: _ExecutableCheck | None = None,
+) -> VerificationResolution:
+    """Prefer an explicit command, then marker-aware discovery."""
+    if configured:
+        return VerificationResolution(
+            command=list(configured),
+            source=VerificationSource.CONFIGURED,
+        )
+    return discover_verification_command(project_dir, available)
+
+
+def find_verification_command(project_dir: str = ".") -> list[str] | None:
+    """Return the discovered verification command, or None when there is none."""
+    return discover_verification_command(project_dir).command or None

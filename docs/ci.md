@@ -110,6 +110,15 @@ sys.exit(0 if result["stop_reason"] == "complete" else 1)
 PY
 ```
 
+### Verification evidence in JSON
+
+When verification ran, the result carries a `verification` object with
+`command`, `source` (`configured` or `discovered`), `detector`, `status`,
+`exit_status`, `timed_out`, `log_path`, and bounded `stdout` / `stderr`. When no
+verifier was resolved, `status` is `skipped` and `source` is `unavailable`, so a
+job can tell "verified" from "not verified" without guessing from the stop
+reason. Full streams stay in the log file; `--verbose` prints them.
+
 ## Notes for CI
 
 - Provide credentials through the environment or the agent's own configuration.

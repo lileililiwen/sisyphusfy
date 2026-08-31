@@ -9,14 +9,17 @@ from pathlib import Path
 
 from sisyphusfy.config import (
     SisyphusConfig,
+    VerificationResolution,
+    VerificationSource,
     apply_cli_overrides,
     discover_handoff_path,
     discover_openspec_change,
     discover_task_path,
-    find_verification_command,
     init_project_config,
     load_config,
+    resolve_verification,
 )
+from sisyphusfy.diagnostics import read_verification_log
 
 
 def cmd_init(project_dir: str = ".", force: bool = False, json_output: bool = False) -> int:
@@ -45,6 +48,7 @@ def cmd_run(
     archive: bool = False,
     commit: bool = False,
     max_iterations: int | None = None,
+    verbose: bool = False,
     **cli_overrides,
 ) -> int:
     config = load_config(project_dir)
@@ -86,9 +90,7 @@ def cmd_run(
 
     handoff_path = discover_handoff_path(project_dir, config)
 
-    verification_command = config.verification_command or None
-    if not verification_command:
-        verification_command = find_verification_command(project_dir)
+    verification = resolve_verification(config.verification_command, project_dir)
 
     if dry_run:
         return _dry_run_output(
@@ -98,7 +100,7 @@ def cmd_run(
             handoff_path=handoff_path,
             workflow_type=workflow_type,
             openspec_dir=openspec_dir,
-            verification_command=verification_command,
+            verification=verification,
             json_output=json_output,
         )
 
@@ -109,8 +111,9 @@ def cmd_run(
         handoff_path=handoff_path,
         workflow_type=workflow_type,
         openspec_dir=openspec_dir,
-        verification_command=verification_command,
+        verification=verification,
         json_output=json_output,
+        verbose=verbose,
     )
 
 
@@ -119,6 +122,7 @@ def cmd_resume(
     json_output: bool = False,
     dry_run: bool = False,
     max_iterations: int | None = None,
+    verbose: bool = False,
     **cli_overrides,
 ) -> int:
     config = load_config(project_dir)
@@ -142,9 +146,7 @@ def cmd_resume(
     if openspec_dir:
         workflow_type = "openspec"
 
-    verification_command = config.verification_command or None
-    if not verification_command:
-        verification_command = find_verification_command(project_dir)
+    verification = resolve_verification(config.verification_command, project_dir)
 
     if dry_run:
         return _dry_run_output(
@@ -154,7 +156,7 @@ def cmd_resume(
             handoff_path=handoff_path,
             workflow_type=workflow_type,
             openspec_dir=openspec_dir,
-            verification_command=verification_command,
+            verification=verification,
             json_output=json_output,
         )
 
@@ -165,8 +167,9 @@ def cmd_resume(
         handoff_path=handoff_path,
         workflow_type=workflow_type,
         openspec_dir=openspec_dir,
-        verification_command=verification_command,
+        verification=verification,
         json_output=json_output,
+        verbose=verbose,
     )
 
 
@@ -267,14 +270,17 @@ def cmd_doctor(project_dir: str = ".", json_output: bool = False) -> int:
     if openspec_dir and not openspec_cli:
         warnings.append("openspec change detected but 'openspec' CLI not found")
 
-    if config.verification_command:
-        cmd_name = config.verification_command[0]
+    verification = resolve_verification(config.verification_command, project_dir)
+    if verification.source is VerificationSource.CONFIGURED:
+        cmd_name = verification.command[0]
         if not shutil.which(cmd_name):
             issues.append(f"verification command not found: {cmd_name}")
-    else:
-        auto_verify = find_verification_command(project_dir)
-        if auto_verify is None:
-            warnings.append("no verification command configured or auto-detected")
+    elif verification.source is VerificationSource.UNAVAILABLE:
+        detail = f" ({verification.detail})" if verification.detail else ""
+        warnings.append(
+            "no verification command configured or detected"
+            f"{detail}; set verification_command for a release gate"
+        )
 
     project_path = Path(project_dir).resolve()
     config_file = project_path / ".sisyphusfy.toml"
@@ -282,7 +288,12 @@ def cmd_doctor(project_dir: str = ".", json_output: bool = False) -> int:
         warnings.append("no .sisyphusfy.toml; using defaults (run 'sisyphusfy init' to create)")
 
     if json_output:
-        print(json.dumps({"issues": issues, "warnings": warnings, "ok": len(issues) == 0}))
+        print(json.dumps({
+            "issues": issues,
+            "warnings": warnings,
+            "ok": len(issues) == 0,
+            "verification": verification.to_dict(),
+        }))
     else:
         if issues:
             print("issues:")
@@ -295,9 +306,20 @@ def cmd_doctor(project_dir: str = ".", json_output: bool = False) -> int:
         if not issues and not warnings:
             print("no issues found")
         print()
+        print(f"verification: {_describe_verification(verification)}")
         print("status: ok" if not issues else "status: issues found")
 
     return 0 if not issues else 1
+
+
+def _describe_verification(verification: VerificationResolution) -> str:
+    """Render the resolved verifier and how it was chosen."""
+    if verification.source is VerificationSource.CONFIGURED:
+        return f"configured: {' '.join(verification.command)}"
+    if verification.source is VerificationSource.DISCOVERED:
+        return f"discovered ({verification.detector}): {' '.join(verification.command)}"
+    detail = f" ({verification.detail})" if verification.detail else ""
+    return f"none found{detail}; set verification_command"
 
 
 def _dry_run_output(
@@ -307,7 +329,7 @@ def _dry_run_output(
     handoff_path: str | None,
     workflow_type: str,
     openspec_dir: str | None,
-    verification_command: list[str] | None,
+    verification: VerificationResolution,
     json_output: bool,
 ) -> int:
     data = {
@@ -319,7 +341,8 @@ def _dry_run_output(
         "handoff_path": handoff_path,
         "workflow_type": workflow_type,
         "openspec_dir": openspec_dir,
-        "verification_command": verification_command,
+        "verification_command": verification.command or None,
+        "verification": verification.to_dict(),
         "max_iterations": config.max_iterations,
         "agent_timeout": config.agent_timeout,
         "archive_enabled": config.archive_enabled,
@@ -341,8 +364,7 @@ def _dry_run_output(
         print(f"  workflow:    {workflow_type}")
         if openspec_dir:
             print(f"  openspec:    {openspec_dir}")
-        if verification_command:
-            print(f"  verify:      {' '.join(verification_command)}")
+        print(f"  verify:      {_describe_verification(verification)}")
         print(f"  iterations:  {config.max_iterations}")
         print(f"  timeout:     {config.agent_timeout}s")
         print(f"  archive:     {'enabled' if config.archive_enabled else 'disabled'}")
@@ -358,8 +380,9 @@ def _execute_loop(
     handoff_path: str | None,
     workflow_type: str,
     openspec_dir: str | None,
-    verification_command: list[str] | None,
+    verification: VerificationResolution,
     json_output: bool,
+    verbose: bool = False,
 ) -> int:
     from sisyphusfy.adapters import AdapterConfig
     from sisyphusfy.hooks import HookConfig, HookType
@@ -416,8 +439,10 @@ def _execute_loop(
         working_directory=project_path,
         task_path=task_path,
         handoff_path=handoff_path,
-        verification_command=verification_command,
+        verification_command=verification.command or None,
         verification_timeout=config.verification_timeout,
+        verification_source=verification.source.value,
+        verification_detector=verification.detector,
         agent_timeout=config.agent_timeout,
         max_iterations=config.max_iterations,
         completion_strategy=completion_strategy,
@@ -431,14 +456,43 @@ def _execute_loop(
     result = run_loop(loop_config)
 
     if json_output:
-        print(json.dumps(result.to_dict(), indent=2))
+        data = result.to_dict()
+        if data.get("verification") is None:
+            data["verification"] = {
+                "command": [],
+                "source": verification.source.value,
+                "detector": verification.detector,
+                "status": "skipped",
+                "log_path": None,
+            }
+        print(json.dumps(data, indent=2))
     else:
-        _print_human_result(result, config)
+        _print_human_result(result, config, verification)
+        if verbose:
+            print_verification_log(result)
 
     return 0 if result.stop_reason.value == "complete" else 1
 
 
-def _print_human_result(result, config: SisyphusConfig) -> None:
+def print_verification_log(result) -> None:
+    """Print the saved verification diagnostics when the user asks for them."""
+    evidence = result.verification
+    if evidence is None or not evidence.log_path:
+        print("no verification diagnostics were captured")
+        return
+    text = read_verification_log(evidence.log_path)
+    if text is None:
+        print(f"verification log is missing: {evidence.log_path}")
+        return
+    print(f"verification diagnostics: {evidence.log_path}")
+    print(text, end="" if text.endswith("\n") else "\n")
+
+
+def _print_human_result(
+    result,
+    config: SisyphusConfig,
+    verification: VerificationResolution | None = None,
+) -> None:
     reason = result.stop_reason.value
 
     if result.iterations > 0:
@@ -457,6 +511,9 @@ def _print_human_result(result, config: SisyphusConfig) -> None:
     if result.completion_pipeline_result:
         for hook in result.completion_pipeline_result.hooks:
             print(f"hook {hook.hook_type.value}: {hook.status.value}")
+
+    if verification is not None and verification.source is VerificationSource.UNAVAILABLE:
+        print("verification: none found; no verifier ran (set verification_command)")
 
     print()
 
@@ -480,10 +537,28 @@ def _print_human_result(result, config: SisyphusConfig) -> None:
         if result.model_attempts:
             print(f"tried: {', '.join(result.model_attempts)}")
     elif reason == "verification_failed":
-        print("verification failed after iteration.")
+        _print_verifier_status(result, "failed")
         print("resume with: sisyphusfy resume")
     elif reason == "timeout":
-        print("agent timed out.")
+        if result.verification is not None and result.verification.timed_out:
+            _print_verifier_status(result, "timed out")
+        else:
+            print("agent timed out.")
         print("resume with: sisyphusfy resume")
     else:
         print(f"stopped: {reason}")
+
+
+def _print_verifier_status(result, outcome: str) -> None:
+    """Report the verifier, its status, and where its full output was saved."""
+    evidence = result.verification
+    if evidence is None:
+        print(f"verification {outcome}.")
+        return
+    status = "timed out" if evidence.timed_out else f"exit {evidence.exit_status}"
+    print(f"verification {outcome}: {' '.join(evidence.command)} ({status})")
+    if evidence.log_path:
+        print(f"  diagnostics: {evidence.log_path}")
+        print("  inspect with: sisyphusfy resume --verbose")
+    else:
+        print("  diagnostics: not written")

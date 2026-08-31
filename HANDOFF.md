@@ -8,7 +8,7 @@ Release-ready codebase with distribution and installation support.
 
 - MIT License selected.
 - OpenSpec initialized for OpenCode and CodeBuddy workflows.
-- 11 changes archived: minimal-runner, durable-iteration-loop, agent-adapters-and-model-fallback, workflow-integrations, optional-archive-commit-hooks, audit-and-fix-agent-workflow, repair-final-workflow-safety, improve-human-friendly-cli, add-distribution-and-installers, repair-distribution-release-gates, close-audit-identified-gaps.
+- 12 changes archived: minimal-runner, durable-iteration-loop, agent-adapters-and-model-fallback, workflow-integrations, optional-archive-commit-hooks, audit-and-fix-agent-workflow, repair-final-workflow-safety, improve-human-friendly-cli, add-distribution-and-installers, repair-distribution-release-gates, close-audit-identified-gaps, simplify-verification-failures.
 - Main specs synced: `minimal-runner`, `iteration-loop`, `agent-adapters`, `workflows`, `agent-workflow`, `workflow-safety`, `human-cli`, `distribution`, `distribution-quality`, `supervisor-quality`.
 - All main specs use canonical `## Purpose` / `## Requirements` format.
 - `distribution` main spec normalized to canonical `## Purpose` / `## Requirements` (removed change-delta `## ADDED Requirements` header) while preserving all five requirements and scenarios.
@@ -23,7 +23,10 @@ Release-ready codebase with distribution and installation support.
 - Default token-efficient prompt; blocked-signal detection on stdout and stderr.
 - Human-friendly CLI: `init`, `run`, `resume`, `status`, `doctor` subcommands.
 - Project configuration in `.sisyphusfy.toml` with precedence: CLI > project > user defaults > built-in.
-- Automatic OpenSpec change discovery, task/handoff file detection, and verification command auto-detection.
+- Automatic OpenSpec change discovery, task/handoff file detection, and marker-based verification command discovery.
+- **Verification discovery is marker-aware.** `find_verification_command()` keeps its signature, but selection moved to ordered detectors in `src/sisyphusfy/config.py`: .NET (`*.sln` / `*.csproj` -> `dotnet test <marker>`), Rust (`Cargo.toml` -> `cargo test`), Python (pytest markers or a `tests/` directory -> `pytest`), JavaScript (`package.json` with a `test` script -> `npm test`), Flutter/Dart (`pubspec.yaml` -> `flutter test`), and a Makefile that declares a `test:` target -> `make test`. A detector requires both its project marker and its executable, so an installed `make` can no longer make a .NET repository resolve to `make test`. Detection is read-only, never runs a candidate verifier, never uses a shell, and stops (instead of falling through) when a marker exists but cannot be read. `resolve_verification()` returns the command plus a `configured` / `discovered` / `unavailable` source.
+- **Verification failures are diagnosable.** Each verification invocation retains a bounded `VerificationEvidence` (command, working directory, exit status, classification, timeout flag, duration, source, detector, truncated streams) in `LoopResult`, and writes its complete stdout/stderr to `<project>/.sisyphusfy/logs/verification-<timestamp>-<pid>-i<iteration>.log` with the newest 20 files kept (`src/sisyphusfy/diagnostics.py`). Logs record no environment values and are never committed or archived by Sisyphusfy.
+- **Output is concise by default.** `run` and `resume` print the verifier, its status, the diagnostic log path, and the resume instruction; `--verbose` (also on `loop`) prints the saved streams. JSON carries `verification` metadata (source, detector, status, exit status, timeout flag, log path) and reports `status: skipped` / `source: unavailable` when no verifier was resolved. `doctor` and `--dry-run` show the resolved source and command before a run.
 - Human-readable progress, fallback, blocker, and next-action output with JSON compatibility.
 - Distribution module in `src/sisyphusfy/distribution.py` with release metadata, checksum generation, and artifact management.
 - npm launcher package in `npm/` for cross-platform installation without Python.
@@ -40,9 +43,9 @@ Release-ready codebase with distribution and installation support.
 - **Missing commands are structured failures.** `run_agent()` classifies a missing executable as `command_not_found` (exit status 127) and the loop reports a `command_not_found` stop reason naming the command, for agent, verification, and completion-check commands. No call site raises an unhandled `FileNotFoundError`.
 - **Release version metadata has one source of truth.** `sisyphusfy.__version__` is the Python-side source; `pyproject.toml` reads it through setuptools dynamic metadata, and `tests/test_version_sync.py` asserts the npm manifest, npm launcher, and both installers agree. `release.yml` fails the publish job when the Git tag disagrees with the packaged version.
 - **First stable release is fully published.** Run `33362030032` on tag `v0.1.0` completed all four `build-artifacts` jobs, `publish-release`, `publish-pypi`, `test-installers`, `test-powershell`, `verify-powershell-syntax`, and `verify-links` successfully. GitHub Release `v0.1.0` carries `SHA256SUMS.txt` and `sisyphusfy-0.1.0-{linux-x86_64,darwin-x86_64,darwin-aarch64,win32-x86_64}.tar.gz`; PyPI carries the wheel and sdist.
-- Public contracts documented: `docs/configuration.md` (every TOML field with type, default, precedence, safety), `docs/adapters.md` (agent and workflow adapter protocols, registry, model fallback, failure classification), `docs/examples.md` (Python, Rust, JavaScript, Flutter, .NET), `docs/ci.md` (CI usage), `docs/security.md` (command-execution model and review checklist).
+- Public contracts documented: `docs/configuration.md` (every TOML field with type, default, precedence, safety, plus verification discovery precedence and diagnostic-log behavior), `docs/adapters.md`, `docs/examples.md`, `docs/ci.md` (CI usage and the JSON `verification` block), `docs/security.md` (command-execution model, read-only detection, bounded diagnostics, and review checklist).
 - GitHub Pages deployment documentation in `docs/deployment.md`.
-- 442 tests across 38 test files (441 passed + 1 skipped with no usable PowerShell runtime, 442 passed where one is available); `ruff check` clean; `compileall` clean; `openspec validate --all --strict` passes. The PowerShell installer syntax check runs when a runnable PowerShell runtime is present and is reported as skipped (not passed, not failed) when none is available.
+- 493 tests across 40 test files (492 passed + 1 skipped with no usable PowerShell runtime, 493 passed where one is available); `ruff check` clean; `compileall` clean; `openspec validate --all --strict` passes. The PowerShell installer syntax check runs when a runnable PowerShell runtime is present and is reported as skipped (not passed, not failed) when none is available.
 - Package builds cleanly.
 
 ## Next action
@@ -68,6 +71,9 @@ openspec validate --all --strict
 - No continuation flags (`-c`, `-s`, `-r`) are passed to preserve fresh sessions.
 - Workflow adapters reload from disk on each observation to detect external changes.
 - Verification runs after each productive iteration but before accepting completion; it never runs twice for the same iteration.
+- An explicitly configured `verification_command` always wins over discovery; discovery is a convenience, not a contract for a release gate.
+- Verification diagnostics are bounded: results keep truncated streams, logs keep everything with the 20 newest files retained, and full output requires `--verbose` or reading the log.
+- A passing verification command proves that command passed, not that the product works end to end.
 - Completion hooks run only after both completion and verification succeed; an already-complete project still verifies before hooks run.
 - Default prompt directs one task, handoff update, and safe stop on blockers.
 - Blocked detection covers stdout and stderr; ordinary failures are not blocked.

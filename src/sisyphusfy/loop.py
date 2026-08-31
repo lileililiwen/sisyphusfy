@@ -17,12 +17,17 @@ from sisyphusfy.adapters import (
     resolve_adapter,
     try_fallback,
 )
+from sisyphusfy.diagnostics import (
+    bound_output,
+    make_run_id,
+    write_verification_log,
+)
 from sisyphusfy.hooks import (
     CompletionPipelineResult,
     HookConfig,
     run_completion_pipeline,
 )
-from sisyphusfy.result import Classification
+from sisyphusfy.result import Classification, RunResult
 from sisyphusfy.runner import run_agent
 from sisyphusfy.workflows import (
     WorkflowAdapter,
@@ -133,6 +138,8 @@ class LoopConfig:
     prompt_template: str = ""
     verification_command: list[str] | None = None
     verification_timeout: float = 30.0
+    verification_source: str = "configured"
+    verification_detector: str = ""
     agent_timeout: float = 60.0
     max_iterations: int = 10
     max_run_records: int = 50
@@ -154,6 +161,45 @@ class RunRecord:
 
 
 @dataclass
+class VerificationEvidence:
+    """Structured evidence for one verification invocation.
+
+    Output is bounded; the complete streams live in the local diagnostic log.
+    """
+
+    command: list[str]
+    working_directory: str
+    exit_status: int | None
+    status: str
+    timed_out: bool
+    duration_ms: float
+    source: str = "configured"
+    detector: str = ""
+    log_path: str | None = None
+    stdout: str = ""
+    stderr: str = ""
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "command": list(self.command),
+            "source": self.source,
+            "detector": self.detector,
+            "working_directory": self.working_directory,
+            "exit_status": self.exit_status,
+            "status": self.status,
+            "timed_out": self.timed_out,
+            "duration_ms": self.duration_ms,
+            "log_path": self.log_path,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "stdout_truncated": self.stdout_truncated,
+            "stderr_truncated": self.stderr_truncated,
+        }
+
+
+@dataclass
 class LoopResult:
     stop_reason: LoopStopReason
     iterations: int
@@ -163,6 +209,7 @@ class LoopResult:
     model_attempts: list[str] = field(default_factory=list)
     adapter_error: str | None = None
     completion_pipeline_result: CompletionPipelineResult | None = None
+    verification: VerificationEvidence | None = None
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -184,6 +231,8 @@ class LoopResult:
             d["adapter_error"] = self.adapter_error
         if self.completion_pipeline_result:
             d["completion_pipeline_result"] = self.completion_pipeline_result.to_dict()
+        if self.verification:
+            d["verification"] = self.verification.to_dict()
         return d
 
 
@@ -315,6 +364,15 @@ def _run_iteration(
 
 
 def run_loop(config: LoopConfig) -> LoopResult:
+    """Run the loop and attach the evidence from its last verification."""
+    evidence: dict[str, VerificationEvidence] = {}
+    result = _run_loop(config, evidence)
+    if result.verification is None and "last" in evidence:
+        result.verification = evidence["last"]
+    return result
+
+
+def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> LoopResult:
     working_directory = str(Path(config.working_directory).resolve())
     task_path = _resolve_under(working_directory, config.task_path)
     handoff_path = (
@@ -358,6 +416,37 @@ def run_loop(config: LoopConfig) -> LoopResult:
         config.completion_strategy, working_directory
     )
 
+    run_id = make_run_id()
+
+    def _record_evidence(result: RunResult, iteration: int) -> None:
+        """Persist full diagnostics and retain bounded evidence for the result."""
+        if result.classification is Classification.DRY_RUN:
+            return
+        stdout, stdout_truncated = bound_output(result.stdout or "")
+        stderr, stderr_truncated = bound_output(result.stderr or "")
+        log_path: str | None = None
+        try:
+            log_path = str(write_verification_log(working_directory, run_id, iteration, result))
+        except OSError:
+            log_path = None
+        item = VerificationEvidence(
+            command=list(result.command),
+            working_directory=result.working_directory,
+            exit_status=result.exit_status,
+            status=result.classification.value,
+            timed_out=result.timed_out,
+            duration_ms=result.duration_ms,
+            source=config.verification_source,
+            detector=config.verification_detector,
+            log_path=log_path,
+            stdout=stdout,
+            stderr=stderr,
+            stdout_truncated=stdout_truncated,
+            stderr_truncated=stderr_truncated,
+        )
+        evidence["last"] = item
+        return item
+
     def _run_verification(iteration: int) -> LoopResult | None:
         """Run verification once. Returns a failure result, or None on success."""
         if not config.verification_command:
@@ -368,6 +457,7 @@ def run_loop(config: LoopConfig) -> LoopResult:
             timeout=config.verification_timeout,
             dry_run=config.dry_run,
         )
+        _record_evidence(vr, iteration)
         if vr.timed_out:
             return LoopResult(
                 stop_reason=LoopStopReason.TIMEOUT,

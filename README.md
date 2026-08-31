@@ -167,6 +167,46 @@ The selected project directory (`--project-dir`, default `.`) is the working
 directory for every subprocess: agent, verification, workflow validation, and
 completion hooks. Relative paths resolve against it.
 
+## Verification
+
+Verification is the loop's only independent evidence, so it is explicit:
+
+```bash
+sisyphusfy run my-change          # uses verification_command, then discovery
+sisyphusfy doctor                 # shows the resolved verifier before a run
+sisyphusfy resume --verbose       # prints saved verification diagnostics
+```
+
+When `verification_command` is empty, Sisyphusfy resolves one from project
+markers, in this order: .NET (`*.sln` / `*.csproj` -> `dotnet test <path>`), Rust
+(`Cargo.toml` -> `cargo test`), Python (pytest markers -> `pytest`), JavaScript
+(`package.json` with a `test` script -> `npm test`), Flutter/Dart
+(`pubspec.yaml` -> `flutter test`), and a Makefile that declares a `test` target
+(-> `make test`). A detector selects a command only when its project marker
+**and** its executable are both present, so an unrelated installed tool such as
+`make` never implies `make test`. Detection is read-only: it never runs a
+candidate verifier and never uses a shell. An explicit `verification_command`
+always wins; see [docs/configuration.md](docs/configuration.md).
+
+A failed verifier prints the command, its exit status, and the path of the log
+that holds the complete output:
+
+```text
+verification failed: dotnet test App.sln (exit 1)
+  diagnostics: .sisyphusfy/logs/verification-20260831T104500-1234-i1.log
+  inspect with: sisyphusfy resume --verbose
+resume with: sisyphusfy resume
+```
+
+Logs live in `<project>/.sisyphusfy/logs/`, one file per run and iteration, with
+the newest 20 kept. They are local diagnostics: Sisyphusfy never commits or
+archives them, and it records no environment values. Default output stays
+concise and JSON carries bounded metadata only; use `--verbose` to read the
+saved streams.
+
+A passing verification command is evidence that the command passed. It is not a
+browser, API, database, or production smoke test unless the command is one.
+
 ## Documentation
 
 | Document | Contents |

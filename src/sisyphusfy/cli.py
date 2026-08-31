@@ -170,6 +170,9 @@ def build_loop_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Print hook commands without executing"
     )
     parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Print saved verification diagnostics"
+    )
+    parser.add_argument(
         "--json", dest="output_json", action="store_true", help="Output structured JSON"
     )
     return parser
@@ -225,6 +228,9 @@ def build_run_parser() -> argparse.ArgumentParser:
         "--commit", action="store_true", help="Enable commit hook on completion"
     )
     parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Print saved verification diagnostics"
+    )
+    parser.add_argument(
         "--json", dest="output_json", action="store_true", help="Output structured JSON"
     )
     return parser
@@ -252,6 +258,9 @@ def build_resume_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Show planned actions without executing"
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Print saved verification diagnostics"
     )
     parser.add_argument(
         "--json", dest="output_json", action="store_true", help="Output structured JSON"
@@ -501,6 +510,10 @@ def _run_loop(argv: list[str] | None) -> None:
         if result.completion_pipeline_result:
             for hook in result.completion_pipeline_result.hooks:
                 print(f"  Hook {hook.hook_type.value}: {hook.status.value}")
+        if args.verbose:
+            from sisyphusfy.human import print_verification_log
+
+            print_verification_log(result)
 
     sys.exit(0 if result.stop_reason.value == "complete" else 1)
 
@@ -530,6 +543,7 @@ def _run_run(argv: list[str]) -> None:
         dry_run=args.dry_run,
         archive=args.archive,
         commit=args.commit,
+        verbose=args.verbose,
         max_iterations=args.max_iterations,
         adapter=args.adapter,
         model_chain=args.model_chain,
@@ -547,6 +561,7 @@ def _run_resume(argv: list[str]) -> None:
         project_dir=args.project_dir,
         json_output=args.output_json,
         dry_run=args.dry_run,
+        verbose=args.verbose,
         max_iterations=args.max_iterations,
         adapter=args.adapter,
         model_chain=args.model_chain,

@@ -9,7 +9,7 @@ states what runs, where it runs, and which safeguards apply.
 | Command | Source | When | Bounded by |
 |---------|--------|------|------------|
 | Agent | `adapter` (or the command after `--` for `sisyphusfy loop`) | Once per iteration | `agent_timeout` |
-| Verification | `verification_command` (or auto-detected `pytest` / `make test` / `cargo test`) | Once per productive iteration, and before completion is accepted | `verification_timeout` |
+| Verification | `verification_command`, else marker-based discovery | Once per productive iteration, and before completion is accepted | `verification_timeout` |
 | Workflow check | `external` workflow `check_command` | Before deciding completion | workflow `timeout` |
 | Workflow validation | `openspec` workflow `validation_command` | When all tasks are checked | workflow `timeout` |
 | Archive hook | `openspec archive` | After completion **and** verification succeed, only when `archive_enabled` or `--archive` | 30s hook timeout |
@@ -40,6 +40,14 @@ enable them, exactly as you would review a `Makefile` target or a CI step.
 - **Dry-run.** `--dry-run` executes nothing: no agent, no verification command,
   no external completion check, no workflow validation, and no hook. Review
   dry-run output before enabling anything that writes.
+- **Read-only detection.** Verification discovery inspects project markers and
+  executable availability; it never runs a candidate verifier to see whether it
+  works, and an executable without its project marker selects nothing.
+- **Bounded diagnostics.** Verification output is written to
+  `<project_dir>/.sisyphusfy/logs/` with the 20 newest files kept. Logs are
+  local, are never committed or archived by Sisyphusfy, and contain no
+  environment values. Default output and JSON stay concise; full streams require
+  `--verbose` or reading the log.
 - **Structured failures.** Failures are reported as data (`verification_failed`,
   `blocked`, `timeout`, `command_not_found`, `adapter_error`) instead of being
   retried blindly or surfacing as an unhandled exception. A missing agent,
@@ -57,4 +65,5 @@ Before enabling a command in a shared repository:
 4. Keep `commit_allowed_files` as narrow as possible; never use `*` or `.`.
 5. Run with `--dry-run` first and read the planned configuration.
 6. Enable archive and commit only when verification is meaningful — a passing
-   verification command is the only independent evidence the loop has.
+   verification command is the only independent evidence the loop has, and it
+   proves only that the command passed, not that the product works end to end.

@@ -7,3 +7,5 @@ __pycache__/
 dist/
 build/
 *.egg
+# Local Sisyphusfy diagnostics created by running the tool in this repository.
+.sisyphusfy/
