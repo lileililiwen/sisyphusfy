@@ -114,6 +114,36 @@ jobs:
             artifacts/**/*.tar.gz
             artifacts/**/SHA256SUMS.txt
 
+  publish-pypi:
+    # Runs after the GitHub Release so a failed release never publishes a
+    # package. Requires the PyPI project and a trusted publisher registered for
+    # this repository and the `pypi` environment; until then this job fails
+    # loudly rather than being skipped.
+    needs: publish-release
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/sisyphusfy
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Build sdist and wheel
+        run: python -m build --sdist --wheel
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
   test-installers:
     needs: publish-release
     runs-on: ubuntu-latest

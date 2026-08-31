@@ -116,6 +116,23 @@ def _npm_advertised_targets() -> set[str]:
     return set(re.findall(r'"([^"]+)"', block.group(1)))
 
 
+class TestPyPiPublication:
+    def test_workflow_publishes_built_distributions(self) -> None:
+        job = _workflow()["jobs"]["publish-pypi"]
+        steps = [step.get("uses", "") for step in job["steps"]]
+        assert any("pypa/gh-action-pypi-publish" in step for step in steps)
+        assert any("python -m build --sdist --wheel" in str(step) for step in job["steps"])
+
+    def test_publication_uses_trusted_publishing(self) -> None:
+        job = _workflow()["jobs"]["publish-pypi"]
+        assert job["permissions"]["id-token"] == "write"
+        assert "PYPI_API_TOKEN" not in RELEASE_WORKFLOW.read_text()
+
+    def test_publication_waits_for_the_github_release(self) -> None:
+        job = _workflow()["jobs"]["publish-pypi"]
+        assert job["needs"] == "publish-release"
+
+
 class TestPosixInstallerTargets:
     def test_supported_targets_match_release_metadata(self) -> None:
         assert _posix_advertised_targets() == {

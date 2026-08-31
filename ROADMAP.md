@@ -51,5 +51,5 @@
 - [x] Add end-to-end examples for Python, Rust, JavaScript, Flutter, and .NET projects.
 - [x] Add contribution guidelines and release automation.
 - [x] Synchronize release version metadata: the package version is the source of truth, and the npm manifest, npm launcher, and installers are verified against it.
-- [ ] Publish the package to PyPI from CI (sdist/wheel are built but never uploaded).
-- [ ] Publish the first stable release.
+- [ ] Register the PyPI project and trusted publisher, then publish the first package from CI (the upload job exists; the project registration does not).
+- [ ] Publish the first stable release (no remote, tag, or GitHub Release exists in this checkout).

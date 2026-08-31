@@ -39,7 +39,8 @@ Release-ready codebase with distribution and installation support.
 - **Completion checks run in the project directory.** The loop scopes the built-in external completion strategy to its working directory (an explicit strategy directory still wins), so `sisyphusfy loop -d <project> --completion-strategy external` checks inside `<project>`.
 - **Missing commands are structured failures.** `run_agent()` classifies a missing executable as `command_not_found` (exit status 127) and the loop reports a `command_not_found` stop reason naming the command, for agent, verification, and completion-check commands. No call site raises an unhandled `FileNotFoundError`.
 - **Release version metadata has one source of truth.** `sisyphusfy.__version__` is the Python-side source; `pyproject.toml` reads it through setuptools dynamic metadata, and `tests/test_version_sync.py` asserts the npm manifest, npm launcher, and both installers agree. `release.yml` fails the publish job when the Git tag disagrees with the packaged version.
-- **Known release gap:** CI builds the sdist and wheel but never uploads them to PyPI. The roadmap keeps `Publish the package to PyPI from CI` and `Publish the first stable release` open. Publication still needs a registered PyPI project and trusted-publisher configuration; no upload step was added because it cannot be verified from this repository.
+- **Known release gap — PyPI publication.** `release.yml` now has a `publish-pypi` job that builds the sdist/wheel and uploads them with `pypa/gh-action-pypi-publish` using trusted publishing (`id-token: write`, no API token). It needs `publish-release`, so a failed GitHub Release never publishes a package. What is still missing is external: register the `sisyphusfy` project on PyPI and configure a trusted publisher for this repository plus the `pypi` environment. Until that is done the job fails loudly instead of being skipped, by design.
+- **Known release gap — first release.** This checkout has no git remote, no tag, and no GitHub Release. Cutting the release requires a remote to push to, then a `v0.1.0` tag on `main` so CI produces the artifacts, checksums, and release; nothing here can do that without repository access.
 - Public contracts documented: `docs/configuration.md` (every TOML field with type, default, precedence, safety), `docs/adapters.md` (agent and workflow adapter protocols, registry, model fallback, failure classification), `docs/examples.md` (Python, Rust, JavaScript, Flutter, .NET), `docs/ci.md` (CI usage), `docs/security.md` (command-execution model and review checklist).
 - GitHub Pages deployment documentation in `docs/deployment.md`.
 - 439 tests across 38 test files; `ruff check` clean; `compileall` clean; `openspec validate --all --strict` passes. The PowerShell installer syntax check runs when a runnable PowerShell runtime is present and is reported as skipped (not passed, not failed) when none is available, so the count is 439 passed on this host and 438 passed + 1 skipped on a host without a usable runtime.
@@ -47,7 +48,10 @@ Release-ready codebase with distribution and installation support.
 
 ## Next action
 
-Post-commit audit gaps closed: completion checks run in the selected project directory, missing commands are reported as `command_not_found` instead of raising, and release version metadata is enforced from one source of truth. Remaining release work: register the PyPI project and trusted publisher, add the upload step, and produce the first GitHub Release — the two open roadmap items.
+Implementation and documentation gaps are closed. The remaining roadmap work is external release publication and cannot be completed from this checkout:
+
+1. Register the `sisyphusfy` project on PyPI and add a trusted publisher for this repository and the `pypi` environment; the `publish-pypi` job then uploads sdist and wheel on tag push.
+2. Add a git remote, push `main`, and tag `v0.1.0` so CI produces the artifacts, checksums, GitHub Release, and PyPI upload. The tag must match `sisyphusfy.__version__` or the release job fails.
 
 ## Verification gates
 
