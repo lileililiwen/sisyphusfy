@@ -55,6 +55,11 @@ pipx install sisyphusfy
 npm install -g sisyphusfy
 ```
 
+The npm launcher is published from tagged releases. If npm reports `E404` for
+this package, the release has not yet been published to npm; see the
+[npm publication setup](docs/deployment.md#npm-package-publication) for the
+one-time maintainer configuration.
+
 ### POSIX installer
 
 ```bash

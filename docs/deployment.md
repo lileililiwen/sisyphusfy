@@ -5,8 +5,8 @@ This document describes how to set up GitHub Pages with a custom domain for Sisy
 ## Prerequisites
 
 - Repository: `lileililiwen/sisyphusfy`
-- Custom domain: `sisyphusfy.dev`
-- DNS provider access for `sisyphusfy.dev`
+- Custom domain: `about.tooosall.uk`
+- DNS provider access for `about.tooosall.uk`
 
 ## Steps
 

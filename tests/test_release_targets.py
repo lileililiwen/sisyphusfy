@@ -133,6 +133,32 @@ class TestPyPiPublication:
         assert job["needs"] == "publish-release"
 
 
+class TestNpmPublication:
+    def test_workflow_publishes_the_npm_package(self) -> None:
+        job = _workflow()["jobs"]["publish-npm"]
+        assert job["needs"] == "publish-release"
+        assert job["permissions"]["id-token"] == "write"
+        assert any(
+            step.get("uses", "").startswith("actions/setup-node@")
+            and step.get("with", {}).get("registry-url") == "https://registry.npmjs.org"
+            for step in job["steps"]
+        )
+        assert any(
+            step.get("run") == "npm publish --access public"
+            and step.get("working-directory") == "npm"
+            for step in job["steps"]
+        )
+        assert any(
+            step.get("run") == "npm --version"
+            for step in job["steps"]
+        )
+
+    def test_npm_publication_does_not_use_a_long_lived_token(self) -> None:
+        content = RELEASE_WORKFLOW.read_text()
+        assert "NPM_TOKEN" not in content
+        assert "NODE_AUTH_TOKEN" not in content
+
+
 class TestPosixInstallerTargets:
     def test_supported_targets_match_release_metadata(self) -> None:
         assert _posix_advertised_targets() == {

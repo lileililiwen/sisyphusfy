@@ -23,5 +23,5 @@ This package downloads the platform-specific Sisyphusfy release artifact and run
 ## Links
 
 - Repository: https://github.com/lileililiwen/sisyphusfy
-- Website: https://sisyphusfy.dev/
+- Website: https://about.tooosall.uk/
 - Releases: https://github.com/lileililiwen/sisyphusfy/releases
