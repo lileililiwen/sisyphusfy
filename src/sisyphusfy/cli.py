@@ -180,6 +180,19 @@ def build_loop_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--json", dest="output_json", action="store_true", help="Output structured JSON"
     )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--interactive",
+        dest="interactive",
+        action="store_true",
+        help="Prompt for blocked decisions on a terminal (default: auto-detect)",
+    )
+    group.add_argument(
+        "--no-interactive",
+        dest="interactive",
+        action="store_false",
+        help="Never prompt; stop and report blocked runs",
+    )
     return parser
 
 
@@ -238,6 +251,19 @@ def build_run_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--json", dest="output_json", action="store_true", help="Output structured JSON"
     )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--interactive",
+        dest="interactive",
+        action="store_true",
+        help="Prompt for blocked decisions on a terminal (default: auto-detect)",
+    )
+    group.add_argument(
+        "--no-interactive",
+        dest="interactive",
+        action="store_false",
+        help="Never prompt; stop and report blocked runs",
+    )
     return parser
 
 
@@ -269,6 +295,19 @@ def build_resume_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--json", dest="output_json", action="store_true", help="Output structured JSON"
+    )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--interactive",
+        dest="interactive",
+        action="store_true",
+        help="Prompt for blocked decisions on a terminal (default: auto-detect)",
+    )
+    group.add_argument(
+        "--no-interactive",
+        dest="interactive",
+        action="store_false",
+        help="Never prompt; stop and report blocked runs",
     )
     return parser
 
@@ -428,6 +467,15 @@ def _run_loop(argv: list[str] | None) -> None:
 
     args = parser.parse_args(program_args)
 
+    # Interactive mode: explicit flag wins; otherwise auto-detect a terminal;
+    # never interactive under JSON output (it must not block for input).
+    if args.output_json:
+        interactive = False
+    elif args.interactive is not None:
+        interactive = args.interactive
+    else:
+        interactive = sys.stdin.isatty()
+
     if not command and not args.adapter:
         parser.error("No agent command provided (use -- to separate)")
 
@@ -497,6 +545,7 @@ def _run_loop(argv: list[str] | None) -> None:
         completion_hooks=completion_hooks,
         dry_run=args.dry_run,
         workflow_config=workflow_config,
+        interactive=interactive,
         # Progress is streamed for human output only; JSON stays machine-readable.
         progress=None if args.output_json else StreamProgress(stream=sys.stderr),
     )
@@ -514,6 +563,9 @@ def _run_loop(argv: list[str] | None) -> None:
             print(f"  Last agent: [{status}] ({last.result.duration_ms:.0f}ms)")
         if result.adapter_error:
             print(f"  Adapter error: {result.adapter_error}")
+        if getattr(result, "blocked_reason", None):
+            for line in result.blocked_reason.splitlines() or [result.blocked_reason]:
+                print(f"  Blocker: {line}")
         if result.completion_pipeline_result:
             for hook in result.completion_pipeline_result.hooks:
                 print(f"  Hook {hook.hook_type.value}: {hook.status.value}")
@@ -555,6 +607,7 @@ def _run_run(argv: list[str]) -> None:
         adapter=args.adapter,
         model_chain=args.model_chain,
         agent_timeout=args.agent_timeout,
+        interactive=args.interactive,
     )
     sys.exit(code)
 
@@ -573,6 +626,7 @@ def _run_resume(argv: list[str]) -> None:
         adapter=args.adapter,
         model_chain=args.model_chain,
         agent_timeout=args.agent_timeout,
+        interactive=args.interactive,
     )
     sys.exit(code)
 

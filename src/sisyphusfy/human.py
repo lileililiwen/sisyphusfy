@@ -57,6 +57,7 @@ def cmd_run(
     commit: bool = False,
     max_iterations: int | None = None,
     verbose: bool = False,
+    interactive: bool | None = None,
     **cli_overrides,
 ) -> int:
     config = load_config(project_dir)
@@ -122,6 +123,7 @@ def cmd_run(
         verification=verification,
         json_output=json_output,
         verbose=verbose,
+        interactive=interactive,
     )
 
 
@@ -131,6 +133,7 @@ def cmd_resume(
     dry_run: bool = False,
     max_iterations: int | None = None,
     verbose: bool = False,
+    interactive: bool | None = None,
     **cli_overrides,
 ) -> int:
     config = load_config(project_dir)
@@ -178,6 +181,7 @@ def cmd_resume(
         verification=verification,
         json_output=json_output,
         verbose=verbose,
+        interactive=interactive,
     )
 
 
@@ -391,6 +395,7 @@ def _execute_loop(
     verification: VerificationResolution,
     json_output: bool,
     verbose: bool = False,
+    interactive: bool | None = None,
 ) -> int:
     from sisyphusfy.adapters import AdapterConfig
     from sisyphusfy.hooks import HookConfig, HookType
@@ -398,6 +403,12 @@ def _execute_loop(
     from sisyphusfy.workflows import WorkflowConfig
 
     project_path = str(Path(project_dir).resolve())
+
+    # Resolve interactive mode: explicit flag wins; otherwise auto-detect a
+    # terminal; never interactive under JSON output (it must not block for input).
+    effective_interactive = bool(interactive) if interactive is not None else sys.stdin.isatty()
+    if json_output:
+        effective_interactive = False
 
     adapter_config = AdapterConfig(
         name=config.adapter,
@@ -459,6 +470,7 @@ def _execute_loop(
         completion_hooks=completion_hooks,
         dry_run=False,
         workflow_config=workflow_config,
+        interactive=effective_interactive,
         # Progress is streamed for human output only; JSON stays machine-readable.
         progress=None if json_output else StreamProgress(stream=sys.stderr),
     )
@@ -540,6 +552,9 @@ def _print_human_result(
         print("resume with: sisyphusfy resume")
     elif reason == "blocked":
         print("blocked. agent requested permission or encountered an ambiguity.")
+        if getattr(result, "blocked_reason", None):
+            for line in result.blocked_reason.splitlines() or [result.blocked_reason]:
+                print(f"  blocker: {line}")
         if result.final_task_path:
             print(f"task state preserved at: {result.final_task_path}")
         if result.final_handoff_path:

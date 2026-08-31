@@ -59,6 +59,45 @@ with `agent_failed` and does **not** run the verifier. This protects you from
 trusting output the agent never produced. If you expected verification, the
 agent must exit zero first.
 
+## A run stops with `blocked`
+
+**Symptom:** the loop stops with `stopped: blocked` (or `blocked. agent
+requested permission or encountered an ambiguity.`) and the report prints a
+`blocker:` line taken from the agent's own output.
+
+**What it means:** the agent emitted a configured blocked marker (default:
+`NEED_PERMISSION`, `BLOCKED`, `permission`, `blocked`) in its output, meaning it
+hit a permission request or an unresolved choice and deliberately stopped. This
+is the agent's signal, not a sisyphusfy error.
+
+**Non-interactive (default for `--json`, pipes, CI):** sisyphusfy stops with
+`blocked`, keeps the task/handoff files on disk, and prints the resume command
+(`sisyphusfy resume`). It never blocks waiting for input, so automated runs
+cannot hang.
+
+**Interactive (a terminal attached, unless `--no-interactive`):** sisyphusfy
+pauses, shows the blocker, and asks for a decision:
+
+```text
+[sisyphusfy] agent is blocked and needs a decision:
+  NEED_PERMISSION: delete file
+approve (or type your answer), or 'deny'/'no' to stop:
+```
+
+- Approve (empty input, or any free text): the loop re-runs the agent in the
+  same iteration with your answer folded into the prompt, then continues past
+  the blocker.
+- Deny (`deny`/`no`/`n`): the iteration stops with `blocked`, exactly as the
+  non-interactive path.
+- A privileged or destructive blocker is never auto-approved; it always requires
+  your explicit response.
+
+Re-prompts are bounded (default 3 per iteration, `--max-interactive-prompts` on
+the low-level `loop` command). If the agent keeps blocking past the cap, the run
+stops with `blocked` rather than looping forever. Force a specific mode with
+`--interactive` / `--no-interactive`; under `--json` interactive mode is always
+off.
+
 ## The command line in the diagnostic log looks "missing quotes"
 
 Sisyphusfy passes the prompt as a single argument to the subprocess (no shell),

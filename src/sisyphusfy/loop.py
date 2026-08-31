@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -99,6 +100,44 @@ class MarkdownCheckboxCompletion:
         return False
 
 
+@dataclass
+class PromptAnswer:
+    """The decision captured from an interactive permission prompt.
+
+    ``denied`` ends the iteration with a ``blocked`` result; otherwise ``text``
+    (which may be empty, meaning "approved with no extra instruction") is folded
+    into the next agent prompt so the loop can continue.
+    """
+
+    denied: bool
+    text: str = ""
+
+
+def _read_terminal_answer(blocker: str) -> PromptAnswer:
+    """Default interactive prompt: read one line from the terminal.
+
+    Reads from stdin and treats empty input, ``deny``, ``no``, or ``n`` as a
+    denial. Any other input is an approval (the text becomes the operator's
+    answer). On EOF/error it denies, so a piped run can never hang here -- the
+    loop engine still stops with ``blocked`` as in the non-interactive path.
+    """
+    try:
+        sys.stderr.write("\n[sisyphusfy] agent is blocked and needs a decision:\n")
+        for line in blocker.splitlines() or [blocker]:
+            sys.stderr.write(f"  {line}\n")
+        sys.stderr.write("approve (or type your answer), or 'deny'/'no' to stop: ")
+        sys.stderr.flush()
+        raw = sys.stdin.readline()
+    except (OSError, EOFError):
+        return PromptAnswer(denied=True)
+    if not raw:
+        return PromptAnswer(denied=True)
+    text = raw.strip()
+    if text.lower() in {"deny", "no", "n"}:
+        return PromptAnswer(denied=True)
+    return PromptAnswer(denied=False, text=text)
+
+
 class ExternalCommandCompletion:
     """Exit 0 from check command means complete."""
 
@@ -163,6 +202,9 @@ class LoopConfig:
     blocked_markers: list[str] = field(default_factory=lambda: list(BLOCKED_MARKERS))
     progress: ProgressSink | None = None
     heartbeat_interval: float = DEFAULT_HEARTBEAT_SECONDS
+    interactive: bool = False
+    max_interactive_prompts: int = 3
+    prompt_user: Callable[[str], PromptAnswer] | None = None
 
 
 @dataclass
@@ -224,6 +266,7 @@ class LoopResult:
     verification: VerificationEvidence | None = None
     agent_evidence: VerificationEvidence | None = None
     agent_error: AgentError | None = None
+    blocked_reason: str | None = None
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -251,6 +294,8 @@ class LoopResult:
             d["agent_evidence"] = self.agent_evidence.to_dict()
         if self.agent_error:
             d["agent_error"] = self.agent_error.to_dict()
+        if self.blocked_reason:
+            d["blocked_reason"] = self.blocked_reason
         return d
 
 
@@ -289,6 +334,48 @@ def _render_prompt(template: str, **kwargs: str) -> str:
         return template.format(**kwargs)
     except KeyError:
         return template
+
+
+def _extract_blocker(result: object) -> str:
+    """Pull the blocker text out of an agent run that emitted a blocked marker.
+
+    Prefers the lines that actually contain a configured marker; falls back to
+    the whole combined output so the operator still sees context. Kept short so
+    it renders readably inside an interactive prompt.
+    """
+    stdout = getattr(result, "stdout", "") or ""
+    stderr = getattr(result, "stderr", "") or ""
+    combined = f"{stdout}\n{stderr}"
+    marker_lines = [
+        line
+        for line in combined.splitlines()
+        if line.strip()
+        for marker in BLOCKED_MARKERS
+        if marker.lower() in line.lower()
+    ]
+    if marker_lines:
+        return "\n".join(marker_lines).strip()
+    return combined.strip() or "(blocked marker detected in agent output)"
+
+
+def _augment_prompt(original: str, blocker: str, answer: PromptAnswer) -> str:
+    """Fold the operator's decision into a fresh agent prompt.
+
+    The agent already exited; this is the only channel to tell the next, fresh
+    invocation what was decided, so it can continue past the blocker.
+    """
+    quoted = "\n".join(f"> {line}" for line in blocker.splitlines() or [blocker])
+    decision = (
+        "You may proceed."
+        if not answer.text
+        else f"Decision from the operator: {answer.text}"
+    )
+    suffix = (
+        "\n\nThe previous run stopped because of a blocked decision. "
+        f"Blocker reported by the agent:\n{quoted}\n{decision}\n"
+        "Continue the task with that decision applied."
+    )
+    return f"{original}{suffix}"
 
 
 def _resolve_under(working_directory: str, path: str) -> str:
@@ -505,6 +592,18 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
             agent_error=agent_error,
         )
 
+    def _blocked_stop(iteration: int, blocker: str) -> LoopResult:
+        """Stop the iteration as blocked, carrying the operator-facing reason."""
+        return LoopResult(
+            stop_reason=LoopStopReason.BLOCKED,
+            iterations=iteration,
+            run_records=run_records,
+            final_task_path=task_path,
+            final_handoff_path=handoff_path,
+            model_attempts=all_model_attempts,
+            blocked_reason=blocker,
+        )
+
     def _run_verification(iteration: int) -> LoopResult | None:
         """Run verification once. Returns a failure result, or None on success."""
         if not config.verification_command:
@@ -675,14 +774,38 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
                 return _agent_stop(LoopStopReason.TIMEOUT, i, result)
 
             if _is_blocked(result, config.blocked_markers):
-                return LoopResult(
-                    stop_reason=LoopStopReason.BLOCKED,
-                    iterations=i,
-                    run_records=run_records,
-                    final_task_path=task_path,
-                    final_handoff_path=handoff_path,
-                    model_attempts=all_model_attempts,
-                )
+                blocker = _extract_blocker(result)
+                if config.interactive and config.prompt_user is not None:
+                    prompt_user = config.prompt_user
+                    resolved = False
+                    for _ in range(config.max_interactive_prompts):
+                        answer = prompt_user(blocker)
+                        if answer.denied:
+                            return _blocked_stop(i, blocker)
+                        augmented = _augment_prompt(prompt, blocker, answer)
+                        result = _run_with_model(p=augmented)
+                        run_records.append(
+                            RunRecord(iteration=i, result=result, prompt=augmented)
+                        )
+                        if len(run_records) > config.max_run_records:
+                            run_records = run_records[-config.max_run_records:]
+                        # An interrupt/timeout during the re-run still stops.
+                        if getattr(result, "interrupted", False):
+                            return _agent_stop(LoopStopReason.INTERRUPTED, i, result)
+                        if result.timed_out:
+                            return _agent_stop(LoopStopReason.TIMEOUT, i, result)
+                        if not _is_blocked(result, config.blocked_markers):
+                            resolved = True
+                            break
+                        # Still blocked: refresh the blocker text and re-prompt.
+                        blocker = _extract_blocker(result)
+                    if resolved:
+                        # Continues past the blocker into verification/completion.
+                        pass
+                    else:
+                        return _blocked_stop(i, blocker)
+                else:
+                    return _blocked_stop(i, blocker)
 
             # A non-zero exit is a failed agent run, whether or not a model
             # chain is configured. Reaching this point with a chain means

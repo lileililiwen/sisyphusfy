@@ -84,6 +84,23 @@ flag, log path) plus truncated output. Read the full streams with
 A passing verification command means that command passed. It is not a browser,
 API, database, or production smoke test unless the command you configure is one.
 
+## Interactive blocked resolution
+
+When an agent run reports a blocked marker (see [troubleshooting](troubleshooting.md)),
+`sisyphusfy run|resume` can pause and ask you for a decision on a terminal. This
+is controlled by the `--interactive` / `--no-interactive` flags:
+
+- Neither flag: auto-detect. Interactive when stdin is a terminal, non-interactive
+  otherwise (so piped/CI runs never hang).
+- `--interactive`: always prompt for blocked decisions.
+- `--no-interactive`: never prompt; stop and report `blocked` (the default for
+  `--json`).
+
+The low-level `sisyphusfy loop` command additionally takes
+`--max-interactive-prompts N` to bound re-prompts per iteration (default 3).
+Denial or an unresolvable blocker always stops the iteration with `blocked`, and
+verification and completion hooks never run on a blocked run.
+
 ## Example
 
 ```toml
