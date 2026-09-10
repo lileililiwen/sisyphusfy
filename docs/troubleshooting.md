@@ -66,9 +66,13 @@ requested permission or encountered an ambiguity.`) and the report prints a
 `blocker:` line taken from the agent's own output.
 
 **What it means:** the agent emitted a configured blocked marker (default:
-`NEED_PERMISSION`, `BLOCKED`, `permission`, `blocked`) in its output, meaning it
-hit a permission request or an unresolved choice and deliberately stopped. This
-is the agent's signal, not a sisyphusfy error.
+`NEED_PERMISSION` or `BLOCKED`) in its output, meaning it hit a permission
+request or an unresolved choice and deliberately stopped. This is the
+agent's signal, not a sisyphusfy error. Blocked detection matches
+markers at word boundaries (and on whole stripped lines) rather than
+doing a case-insensitive substring search, so ordinary prose such as
+"permission bits" or "blocking issue resolved" no longer trips the
+blocked path.
 
 **Non-interactive (default for `--json`, pipes, CI):** sisyphusfy stops with
 `blocked`, keeps the task/handoff files on disk, and prints the resume command

@@ -8,11 +8,17 @@ a developer does and read either the exit status or `--json` output.
 | Result | Exit code |
 |--------|-----------|
 | `complete` | `0` |
-| anything else (`max_iterations`, `blocked`, `timeout`, `agent_failed`, `verification_failed`, `command_not_found`, `unchanged_state`, `models_exhausted`, `adapter_error`, `dry_run`) | `1` |
+| anything else (`max_iterations`, `blocked`, `timeout`, `agent_failed`, `verification_failed`, `command_not_found`, `unchanged_state`, `models_exhausted`, `adapter_error`, `context_budget_exceeded`, `dry_run`) | `1` |
 
 `command_not_found` is returned when a configured agent, verification, or
 completion command cannot be executed; the result names the missing command so a
 CI log can point at the fix.
+
+`context_budget_exceeded` is returned when a configured input budget
+rejects an over-budget prompt before the agent is invoked. The result's
+`context_telemetry` carries the `budget_event` (`"rejected"` or
+`"truncated"`) and the cumulative estimated input size, so a CI job
+can distinguish a deliberate budget stop from an agent failure.
 
 ## Preview gate: verify configuration without executing
 

@@ -155,5 +155,12 @@ Every example can be interrupted and resumed. The task file and handoff file are
 the durable state:
 
 ```bash
-sisyphusfy resume
+sisyphusfy resume                       # continue the durable loop
+sisyphusfy resume --inspect             # read the most recent diagnostic log
+sisyphusfy resume --verification-timeout 600   # raise the verification limit
 ```
+
+Use `--verification-timeout N` when the project verifier (e.g. a long
+`pytest`, `cargo test`, or `dotnet test` run) needs more than the 30s
+default. The effective value is shown in dry-run output and in the
+structured JSON result.

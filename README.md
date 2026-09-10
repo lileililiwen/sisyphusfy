@@ -16,6 +16,10 @@ It is for developers who want repeatable agent-assisted development without coup
 - **Safe automation:** dry runs, structured JSON results, timeout handling, and explicit permission boundaries support CI and local use.
 - **Bounded process cleanup:** on POSIX the runner launches each agent and verifier in its own process session, so a timeout or interrupt signals the entire group and reaps a long-lived descendant before returning. The structured `timeout` / `interrupted` classification is preserved.
 - **Read-only Git inspection:** `sisyphusfy status --diff` and `sisyphusfy diff` show a bounded Git status and unified diff (default 50 KB, with a `truncated` flag) without ever staging, committing, or pushing.
+- **Component-labelled diagnostics:** every managed subprocess (agent, verification, hook, workflow) writes to its own file under `<project>/.sisyphusfy/logs/`, with shared retention and a `--inspect` flag that reads the most recent log without rerunning the loop.
+- **Context budget:** a configurable input cap with `reject` or `truncate` policy, a deterministic `chars/4` estimate, and structured `ContextTelemetry` so operators see what was sent and what was truncated.
+- **Workspace progress:** opt-in source-change evidence keeps the loop running when the agent edits files outside the task/handoff snapshot, while ordinary case-by-case progress still uses the durable task/handoff files.
+- **Configuration safety:** malformed TOML raises a structured `ConfigurationError` naming the source; paths must resolve inside the project directory by default, with an explicit opt-out for system-wide state.
 
 ## Why
 
@@ -192,7 +196,13 @@ Verification is the loop's only independent evidence, so it is explicit:
 sisyphusfy run my-change          # uses verification_command, then discovery
 sisyphusfy doctor                 # shows the resolved verifier before a run
 sisyphusfy resume --verbose       # prints saved verification diagnostics
+sisyphusfy resume --inspect       # reads the most recent diagnostic log without running
 ```
+
+`--verification-timeout N` overrides the 30-second default on both
+`run` and `resume`; the effective value appears in dry-run output
+(`verify-timeout: Ns`) and in the structured JSON result
+(`verification_timeout: N`).
 
 When `verification_command` is empty, Sisyphusfy resolves one from project
 markers, in this order: .NET (`*.sln` / `*.csproj` -> `dotnet test <path>`), Rust
@@ -210,7 +220,7 @@ that holds the complete output:
 
 ```text
 verification failed: dotnet test App.sln (exit 1)
-  diagnostics: .sisyphusfy/logs/verification-20260831T104500-1234-i1.log
+  diagnostics: .sisyphusfy/logs/verify-20260831T104500-1234-i1.log
   inspect with: sisyphusfy resume --verbose
 resume with: sisyphusfy resume
 ```
@@ -223,7 +233,7 @@ reference and the path of the log that holds the full output:
 [agent] failed: opencode exited with code 1
 [agent] error: Unexpected server error. Check server logs for details.
 [agent] reference: err_cbece906
-[agent] diagnostics: .sisyphusfy/logs/verification-20260831T104500-1234-i1.log
+[agent] diagnostics: .sisyphusfy/logs/agent-20260831T104500-1234-i1.log
   inspect with: sisyphusfy resume --verbose
 stopped: agent_failed
 resume with: sisyphusfy resume
@@ -443,16 +453,22 @@ integrations, and completion hooks are implemented and tested.
 - OpenCode adapter (`opencode run --model <model>`), CodeBuddy adapter (`codebuddy -p`), and generic command adapter.
 - Model-chain fallback with retryable/non-retryable failure classification.
 - Workflow adapters: Markdown checklists, JSON predicates, external commands, OpenSpec tasks.
-- Configurable blocked-signal detection across stdout and stderr.
+- Configurable blocked-signal detection with word-boundary matching on a focused marker set.
 - Opt-in archive and commit hooks with explicit file allowlists.
 - Default token-efficient prompt when no custom template is configured.
 - Human-friendly CLI: `init`, `run`, `resume`, `status`, `doctor`, `diff` subcommands.
-- Project configuration in `.sisyphusfy.toml` with documented precedence.
+- Project configuration in `.sisyphusfy.toml` with documented precedence and a structured `ConfigurationError` on parse failure.
 - Automatic OpenSpec change discovery and task/handoff file detection.
 - Human-readable progress, fallback, blocker, and next-action output.
-- Bounded subprocess cleanup (process-group kill on timeout/interrupt) for agent and verifier.
+- Bounded subprocess cleanup (process-group kill on timeout/interrupt) shared by agent, verifier, hook, and workflow commands.
 - Commit-hook index validation: refuses to run when the existing index has staged paths outside the canonicalized allowlist, with a bounded `git add` and a structured failure on timeout.
 - Read-only Git inspection adapter: `git status`, `git diff`, and `git diff --stat` with bounded output and a `truncated` flag; `sisyphusfy status --diff` and `sisyphusfy diff` for the human CLI.
+- Component-labelled diagnostic logs: agent, verification, workflow, and hook each get their own file under `<project>/.sisyphusfy/logs/`, with shared retention.
+- `sisyphusfy resume --inspect` reads the most recent diagnostic log without starting a new agent iteration.
+- Configurable context budget with `reject` or `truncate` policy, labelled per-iteration estimate, structured `ContextTelemetry`, and bounded handoff recovery (never a prior conversation transcript).
+- Workspace-change evidence (`LoopConfig.workspace_evidence`) so source-only progress keeps the loop running when the operator opts in.
+- Path-boundary enforcement: `task_path`, `handoff_path`, and workflow paths must resolve inside the project directory; escapes raise `ConfigurationError` before the agent is invoked.
+- Uppercase checklist support: the `OpenSpecAdapter` accepts `- [X]` consistently with the markdown adapter.
 
 ## Name
 

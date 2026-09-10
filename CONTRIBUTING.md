@@ -9,3 +9,8 @@ Before opening a pull request:
 3. verify timeout, failure, and blocked states;
 4. document security implications of command execution;
 5. keep the default prompt short and generic.
+
+For new product changes, follow the OpenSpec workflow described in
+`AGENTS.md`: propose, validate, implement, verify, archive. The
+change-completion workflow uses two commits so the change history
+stays decoupled from the meta-status history.

@@ -18,8 +18,11 @@ missing key never erases a value from a lower-precedence source.
 `--project-dir` (or `-d`) selects the directory whose `.sisyphusfy.toml` is read
 **and** the working directory used for every subprocess the loop starts.
 
-Invalid or unreadable TOML is treated as an empty file, so a broken user
-configuration never blocks a project run.
+Invalid or unreadable TOML raises a structured `ConfigurationError` naming
+the file and the parse failure. `cmd_run`, `cmd_resume`, `cmd_status`, and
+`cmd_doctor` catch it and report a `configuration_failure` in both human
+and JSON modes, so a broken user or project config never silently falls
+back to unrelated defaults.
 
 ## `.sisyphusfy.toml` fields
 

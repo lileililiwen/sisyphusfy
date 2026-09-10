@@ -54,6 +54,9 @@ Retrying with another model is allowed only for classified provider/process fail
 - Keep handoff files as summaries, not append-only logs.
 - Do not ask the agent to restate the whole repository or specification.
 - Start the next specification with a new session and a new handoff boundary.
+- Record a documented provider-neutral estimate of every prompt and expose it
+  in the structured result; a configured input budget may reject or
+  truncate an over-budget prompt before the agent is invoked.
 
 ## Safety rules
 
@@ -63,6 +66,9 @@ Retrying with another model is allowed only for classified provider/process fail
 - Destructive or privileged operations require explicit project/agent configuration.
 - Model fallback never bypasses verification.
 - Automatic commit, archive, and push are opt-in.
+- Configured paths (`task_path`, `handoff_path`, workflow paths) must resolve
+  inside the selected project directory; an escape raises a structured
+  `ConfigurationError` before the agent is invoked.
 
 ## Configuration boundary
 

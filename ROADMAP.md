@@ -53,3 +53,20 @@
 - [x] Synchronize release version metadata: the package version is the source of truth, and the npm manifest, npm launcher, and installers are verified against it.
 - [x] Publish the first stable release: GitHub Release v0.1.0 ships sisyphusfy-0.1.0-{linux-x86_64,darwin-x86_64,darwin-aarch64,win32-x86_64}.tar.gz plus SHA256SUMS.txt.
 - [x] Register the PyPI project and trusted publisher; PyPI publication of `sisyphusfy==0.1.0` succeeds through the `publish-pypi` job.
+
+## Phase 6 — Operational hardening
+
+- [x] Tighten the agent adapter and fallback contracts: defensive `classify_failure` and `parse_error` so stale custom adapters never crash the supervisor or rotate models silently.
+- [x] Bound subprocess lifecycle and output across every managed component (agent, verification, hook, workflow check) through a shared `run_command` primitive with component-labelled diagnostic logs and process-group cleanup.
+
+## Phase 7 — Workspace integrity
+
+- [x] Make workspace progress and completion reliable: opt-in source-change evidence, word-boundary blocked detection, structured `ConfigurationError` on malformed TOML, project-root path boundaries, and consistent uppercase/lowercase checklist parsing.
+- [x] Add context budgets and handoff compaction: deterministic `chars/4` provider-neutral estimate, `reject`/`truncate` budget policy, bounded handoff sections, and `HandoffCompactor` that only rewrites the configured handoff file.
+
+## Phase 8 — Long-run operability
+
+- [x] Component-labelled diagnostic naming for every managed subprocess.
+- [x] `--verification-timeout` override on `run` and `resume` with dry-run + JSON reporting of the effective value.
+- [x] `sisyphusfy resume --inspect` reads the most recent diagnostic log without starting a new agent iteration.
+- [x] Concise human failure summary with component, status, duration, log path, and inspect hint.
