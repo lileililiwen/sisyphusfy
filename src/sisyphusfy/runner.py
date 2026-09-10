@@ -1,14 +1,14 @@
-"""The single bounded subprocess boundary for agents and verification.
+"""The single bounded subprocess execution primitive.
 
-Output is streamed line by line to optional progress callbacks while the child
-runs, and is still captured in full so results keep their evidence. Timeouts and
-interruptions stop the child through the same cleanup path and keep whatever
-output was already received.
-
-On POSIX the runner launches the child in its own process session and terminates
-the entire group on timeout or interrupt, so a grandchild outliving the agent
-is reaped. The cleanup path is bounded by the same grace periods the original
-implementation used.
+Every managed subprocess -- agent, verification, hook, workflow check, and
+anything added later -- runs through :func:`run_command`. The primitive
+streams progress to optional callbacks while it runs, retains only a
+configurable bound of stdout/stderr in the structured result, and writes
+the complete streams to a local diagnostic log when asked. A bounded
+timeout and a process-group kill reap a long-lived descendant, and the
+classification distinguishes success, non-zero failure, timeout,
+interruption, and command-not-found outcomes without raising to the
+caller.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from sisyphusfy.diagnostics import DEFAULT_MAX_OUTPUT_BYTES
 from sisyphusfy.progress import DEFAULT_HEARTBEAT_SECONDS
 from sisyphusfy.result import Classification, RunResult
 
@@ -90,12 +91,55 @@ class _Progress:
             self._enabled = False
 
 
-def _read_lines(stream, chunks: list[str], activity: _Activity, progress: _Progress) -> None:
+class _BoundedCollector:
+    """Capture one stream up to a byte budget and signal when truncated.
+
+    The cap applies to the size in characters; the child keeps writing, the
+    reader keeps draining, and a :class:`RunResult` records the captured
+    slice plus a ``truncated`` flag. The full stream is still available to
+    the diagnostic log writer.
+    """
+
+    def __init__(self, max_chars: int) -> None:
+        self._max = max_chars
+        self._buf: list[str] = []
+        self._size = 0
+        self._truncated = False
+
+    def append(self, text: str) -> None:
+        if not text:
+            return
+        if self._size >= self._max:
+            self._truncated = True
+            return
+        remaining = self._max - self._size
+        if len(text) > remaining:
+            self._buf.append(text[:remaining])
+            self._size = self._max
+            self._truncated = True
+            return
+        self._buf.append(text)
+        self._size += len(text)
+
+    @property
+    def truncated(self) -> bool:
+        return self._truncated
+
+    def text(self) -> str:
+        return "".join(self._buf)
+
+
+def _read_lines(
+    stream,
+    collector: _BoundedCollector,
+    activity: _Activity,
+    progress: _Progress,
+) -> None:
     """Capture one stream and forward each complete line as progress."""
     try:
         for raw in iter(stream.readline, b""):
             text = raw.decode(errors="replace")
-            chunks.append(text)
+            collector.append(text)
             activity.touch()
             line = text.rstrip("\r\n").strip()
             if line:
@@ -185,20 +229,27 @@ def _pump(
     start: float,
     progress: _Progress,
     heartbeat_interval: float,
-) -> tuple[str, str, bool, bool]:
+    max_output_chars: int,
+) -> tuple[str, str, bool, bool, bool]:
     """Wait for the child while emitting heartbeats and enforcing the timeout.
 
-    Returns the captured stdout, stderr, whether the child timed out, and
-    whether it was interrupted.
+    Returns the captured stdout, stderr, whether the child timed out, whether
+    it was interrupted, and whether either stream was truncated to the
+    configured bound.
     """
     activity = _Activity()
-    chunks_out: list[str] = []
-    chunks_err: list[str] = []
+    collector_out = _BoundedCollector(max_output_chars)
+    collector_err = _BoundedCollector(max_output_chars)
     readers = [
         threading.Thread(
-            target=_read_lines, args=(stream, chunks, activity, progress), daemon=True
+            target=_read_lines,
+            args=(stream, collector, activity, progress),
+            daemon=True,
         )
-        for stream, chunks in ((proc.stdout, chunks_out), (proc.stderr, chunks_err))
+        for stream, collector in (
+            (proc.stdout, collector_out),
+            (proc.stderr, collector_err),
+        )
     ]
     for reader in readers:
         reader.start()
@@ -229,22 +280,46 @@ def _pump(
     for reader in readers:
         reader.join(DRAIN_GRACE_SECONDS)
 
-    return "".join(chunks_out), "".join(chunks_err), timed_out, interrupted
+    truncated = collector_out.truncated or collector_err.truncated
+    return (
+        collector_out.text(),
+        collector_err.text(),
+        timed_out,
+        interrupted,
+        truncated,
+    )
 
 
-def run_agent(
+def run_command(
     command: list[str],
     *,
     working_directory: str | Path = ".",
+    component: str = "command",
     prompt: str | None = None,
-    timeout: float = 60.0,
     env: dict[str, str] | None = None,
+    timeout: float = 60.0,
+    max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
     dry_run: bool = False,
     on_output: Callable[[str], None] | None = None,
     on_heartbeat: Callable[[float, float], None] | None = None,
     heartbeat_interval: float = DEFAULT_HEARTBEAT_SECONDS,
+    run_id: str | None = None,
+    log_dir: Path | None = None,
+    iteration: int | None = None,
 ) -> RunResult:
-    """Run one command as an argument list, streaming progress as it runs."""
+    """Run one command as an argument list, streaming progress as it runs.
+
+    The result is bounded in memory by ``max_output_bytes`` (default 64 KiB)
+    and the structured result carries a ``truncated`` flag. When ``log_dir``
+    is provided, the complete streams are also written to a
+    component-labelled local diagnostic log; the resulting path is stored
+    on ``RunResult.log_path``.
+
+    Every subprocess is launched in its own process session on POSIX so a
+    timeout or interrupt can signal the whole group; on Windows only the
+    direct child is signalled and the structured classification is
+    preserved either way.
+    """
     cwd = str(Path(working_directory).resolve())
 
     if dry_run:
@@ -265,7 +340,7 @@ def run_agent(
     start = time.monotonic()
     progress = _Progress(on_output, on_heartbeat)
 
-    # On POSIX, launch the agent in its own session so the timeout / interrupt
+    # On POSIX, launch the child in its own session so the timeout / interrupt
     # cleanup can signal the entire process group. The argument list is
     # unchanged; only the lifecycle wrapper differs.
     popen_kwargs: dict = {
@@ -300,8 +375,13 @@ def run_agent(
     else:
         _write_stdin(proc.stdin, b"")
 
-    stdout, stderr, timed_out, interrupted = _pump(
-        proc, timeout, start, progress, heartbeat_interval
+    stdout, stderr, timed_out, interrupted, truncated = _pump(
+        proc,
+        timeout,
+        start,
+        progress,
+        heartbeat_interval,
+        max_output_bytes,
     )
     duration = (time.monotonic() - start) * 1000
     exit_status = proc.returncode if proc.returncode is not None else -1
@@ -315,7 +395,7 @@ def run_agent(
     else:
         classification = Classification.FAILURE
 
-    return RunResult(
+    result = RunResult(
         command=command,
         exit_status=exit_status,
         classification=classification,
@@ -324,7 +404,62 @@ def run_agent(
         duration_ms=round(duration, 2),
         timed_out=timed_out,
         interrupted=interrupted,
+        truncated=truncated,
         working_directory=cwd,
         prompt=prompt,
         env=env or {},
+    )
+
+    if log_dir is not None:
+        from sisyphusfy.diagnostics import write_subprocess_log
+
+        if run_id is None:
+            from sisyphusfy.diagnostics import make_run_id
+
+            run_id = make_run_id(start)
+        log_path = write_subprocess_log(
+            log_dir,
+            component=component,
+            run_id=run_id,
+            result=result,
+            iteration=iteration,
+        )
+        result.log_path = str(log_path)
+    return result
+
+
+def run_agent(
+    command: list[str],
+    *,
+    working_directory: str | Path = ".",
+    prompt: str | None = None,
+    timeout: float = 60.0,
+    env: dict[str, str] | None = None,
+    dry_run: bool = False,
+    on_output: Callable[[str], None] | None = None,
+    on_heartbeat: Callable[[float, float], None] | None = None,
+    heartbeat_interval: float = DEFAULT_HEARTBEAT_SECONDS,
+    log_dir: Path | None = None,
+    run_id: str | None = None,
+) -> RunResult:
+    """Run an agent invocation; thin wrapper over :func:`run_command`.
+
+    The agent shares the bounded subprocess primitive. ``component`` is fixed
+    to ``"agent"`` so the diagnostic log lands at
+    ``<project>/.sisyphusfy/logs/agent-<run_id>.log`` when ``log_dir`` is
+    set.
+    """
+    return run_command(
+        command,
+        working_directory=working_directory,
+        component="agent",
+        prompt=prompt,
+        env=env,
+        timeout=timeout,
+        dry_run=dry_run,
+        on_output=on_output,
+        on_heartbeat=on_heartbeat,
+        heartbeat_interval=heartbeat_interval,
+        run_id=run_id,
+        log_dir=log_dir,
     )

@@ -8,9 +8,16 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from sisyphusfy.diagnostics import subprocess_log_dir
+from sisyphusfy.result import Classification
+from sisyphusfy.runner import run_command
+
 # Bounded time for the staging subprocess. A run that hangs is a hard failure
 # (the hook reports it and does not run the commit command).
 STAGE_TIMEOUT_SECONDS = 30.0
+
+# Bounded time for the hook's own command (e.g. `git commit`, `openspec archive`).
+HOOK_TIMEOUT_SECONDS = 30.0
 
 
 class HookType(str, Enum):
@@ -258,45 +265,52 @@ def run_hook(config: HookConfig, dry_run: bool = False) -> HookResult:
                 error=f"failed to stage allowed files: {err.strip()}",
             )
 
-    try:
-        proc = subprocess.run(
-            config.command,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-            cwd=config.working_directory,
+    component = f"hook-{config.hook_type.value}"
+    result = run_command(
+        config.command,
+        working_directory=config.working_directory,
+        component=component,
+        timeout=HOOK_TIMEOUT_SECONDS,
+        log_dir=subprocess_log_dir(config.working_directory),
+    )
+    classification = result.classification
+    if classification == Classification.SUCCESS:
+        return HookResult(
+            hook_type=config.hook_type,
+            status=HookStatus.SUCCESS,
+            command=config.command,
+            stdout=result.stdout,
+            stderr=result.stderr,
         )
-        if proc.returncode == 0:
-            return HookResult(
-                hook_type=config.hook_type,
-                status=HookStatus.SUCCESS,
-                command=config.command,
-                stdout=proc.stdout,
-                stderr=proc.stderr,
-            )
+    if classification == Classification.COMMAND_NOT_FOUND:
         return HookResult(
             hook_type=config.hook_type,
             status=HookStatus.FAILURE,
             command=config.command,
-            stdout=proc.stdout,
-            stderr=proc.stderr,
-            error=f"exit code {proc.returncode}",
+            error=f"command not found: {config.command[0] if config.command else ''}",
         )
-    except subprocess.TimeoutExpired:
+    if classification == Classification.TIMEOUT:
         return HookResult(
             hook_type=config.hook_type,
             status=HookStatus.FAILURE,
             command=config.command,
-            error="hook timed out",
+            error=f"hook timed out after {HOOK_TIMEOUT_SECONDS}s",
         )
-    except OSError as exc:
+    if classification == Classification.INTERRUPTED:
         return HookResult(
             hook_type=config.hook_type,
             status=HookStatus.FAILURE,
             command=config.command,
-            error=str(exc),
+            error="hook interrupted",
         )
+    return HookResult(
+        hook_type=config.hook_type,
+        status=HookStatus.FAILURE,
+        command=config.command,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        error=f"exit code {result.exit_status}",
+    )
 
 
 def run_completion_pipeline(

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import operator
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
+
+from sisyphusfy.diagnostics import subprocess_log_dir
+from sisyphusfy.result import Classification
+from sisyphusfy.runner import run_command
 
 
 class WorkflowError(Exception):
@@ -199,20 +202,24 @@ class ExternalCommandAdapter:
     def is_complete(self) -> bool:
         if self._dry_run:
             return False
-        try:
-            proc = subprocess.run(
-                self._check_command,
-                capture_output=True,
-                timeout=self._timeout,
-                check=False,
-                cwd=self._working_directory,
+        result = run_command(
+            self._check_command,
+            working_directory=self._working_directory,
+            component="workflow",
+            timeout=self._timeout,
+            log_dir=subprocess_log_dir(self._working_directory),
+        )
+        self._last_returncode = result.exit_status
+        classification = result.classification
+        if classification == Classification.COMMAND_NOT_FOUND:
+            raise WorkflowError(
+                f"command not found: {self._check_command[0]}"
             )
-            self._last_returncode = proc.returncode
-            return proc.returncode == 0
-        except FileNotFoundError:
-            raise WorkflowError(f"command not found: {self._check_command[0]}")
-        except subprocess.TimeoutExpired:
+        if classification == Classification.TIMEOUT:
             raise WorkflowError(f"command timed out after {self._timeout}s")
+        if classification == Classification.INTERRUPTED:
+            raise WorkflowError("command interrupted")
+        return result.exit_status is None or result.exit_status == 0
 
     def explain(self) -> str:
         if self._last_returncode is None:
@@ -266,20 +273,26 @@ class OpenSpecAdapter:
         return self._validation_command
 
     def _run_validation(self) -> None:
-        try:
-            proc = subprocess.run(
-                self._validation_command,
-                capture_output=True,
-                timeout=self._timeout,
-                check=False,
-                cwd=self._working_directory,
+        result = run_command(
+            self._validation_command,
+            working_directory=self._working_directory,
+            component="workflow",
+            timeout=self._timeout,
+            log_dir=subprocess_log_dir(self._working_directory),
+        )
+        classification = result.classification
+        if classification == Classification.COMMAND_NOT_FOUND:
+            raise WorkflowError(
+                f"validation command not found: {self._validation_command[0]}"
             )
-            if proc.returncode != 0:
-                raise WorkflowError(f"validation failed with exit code {proc.returncode}")
-        except FileNotFoundError:
-            raise WorkflowError(f"validation command not found: {self._validation_command[0]}")
-        except subprocess.TimeoutExpired:
+        if classification == Classification.TIMEOUT:
             raise WorkflowError(f"validation timed out after {self._timeout}s")
+        if classification == Classification.INTERRUPTED:
+            raise WorkflowError("validation interrupted")
+        if result.exit_status != 0:
+            raise WorkflowError(
+                f"validation failed with exit code {result.exit_status}"
+            )
 
     def has_work(self) -> bool:
         return not self.is_complete()

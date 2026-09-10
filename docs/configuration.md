@@ -69,16 +69,20 @@ Markers are read from the project directory only. When no detector matches,
 `sisyphusfy doctor` reports that no verifier was found and the loop runs without
 verification, so a run never looks like a verified success.
 
-## Verification diagnostics
+## Subprocess diagnostics
 
-Each verification invocation writes its complete stdout and stderr to
-`<project_dir>/.sisyphusfy/logs/verification-<timestamp>-<pid>-i<iteration>.log`,
-keeping the 20 newest files. The logs are local diagnostics: Sisyphusfy never
-commits or archives them and records no environment values.
+Every managed subprocess (agent, verification, hook, workflow check) shares
+one bounded execution primitive. The in-memory `stdout`/`stderr` it returns
+is capped at 64 KiB by default (`max_output_bytes`); the structured result
+keeps the bounded slice plus a `truncated` flag, and the complete streams
+are written to `<project_dir>/.sisyphusfy/logs/<component>-<run_id>.log` so
+the user can read them deliberately. A unified retention prunes the 20
+newest files across every component.
 
-Default human output stays concise — verifier, status, and log path — and JSON
-carries bounded metadata (`command`, `source`, `status`, `exit status`, timeout
-flag, log path) plus truncated output. Read the full streams with
+The logs are local diagnostics: Sisyphusfy never commits or archives them
+and records no environment values or prompts. Default human output stays
+concise — component, status, and log path — and JSON carries bounded
+metadata plus the truncated output. Read the full streams with
 `sisyphusfy run|resume --verbose`, or open the reported log path.
 
 A passing verification command means that command passed. It is not a browser,

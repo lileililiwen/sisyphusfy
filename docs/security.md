@@ -20,8 +20,22 @@ enable them, exactly as you would review a `Makefile` target or a CI step.
 
 ## Safeguards
 
-- **No shell.** Commands are argument lists passed to `subprocess.run` without
-  `shell=True`. A configuration value cannot inject additional commands.
+- **No shell.** Commands are argument lists passed to the shared
+  `run_command` primitive without `shell=True`. A configuration value cannot
+  inject additional commands.
+- **Bounded subprocess output.** Every managed subprocess caps the
+  in-memory stdout/stderr at `max_output_bytes` (default 64 KiB). The
+  structured result keeps a bounded slice plus a `truncated` flag, and the
+  complete streams are written to a component-labelled local diagnostic log
+  under `<project>/.sisyphusfy/logs/`. A noisy command cannot exhaust
+  memory; the diagnostic log keeps the full record for deliberate
+  inspection.
+- **Process-group cleanup.** On POSIX, every managed subprocess is launched
+  in its own session. A timeout or interrupt signals the entire group,
+  waits the bounded grace period, and signals the group again with SIGKILL
+  before reaping the launched process. A long-lived descendant of any
+  managed command (agent, verification, hook, workflow) cannot outlive the
+  loop.
 - **Display quoting.** Where a command is shown (diagnostic logs, the
   human-readable result, `doctor`, and dry-run), each argument is rendered with
   shell-style quoting via `shlex.join`. A multi-word argument such as the default

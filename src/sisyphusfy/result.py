@@ -25,10 +25,12 @@ class RunResult:
     duration_ms: float = 0.0
     timed_out: bool = False
     interrupted: bool = False
+    truncated: bool = False
     working_directory: str = ""
     prompt: str | None = None
     env: dict[str, str] = field(default_factory=dict)
     error: str | None = None
+    log_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -40,12 +42,15 @@ class RunResult:
             "duration_ms": self.duration_ms,
             "timed_out": self.timed_out,
             "interrupted": self.interrupted,
+            "truncated": self.truncated,
             "working_directory": self.working_directory,
             "prompt": self.prompt,
             "env": self.env,
         }
         if self.error:
             d["error"] = self.error
+        if self.log_path:
+            d["log_path"] = self.log_path
         return d
 
 
