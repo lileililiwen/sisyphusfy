@@ -9,3 +9,7 @@ build/
 *.egg
 .codegraph/
 .zvec-grep/
+# Runtime artifacts written by Sisyphusfy itself
+.sisyphusfy/
+# Local uv lock files (project uses setuptools; uv is not the package manager)
+uv.lock
