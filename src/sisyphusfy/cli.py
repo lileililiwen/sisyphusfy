@@ -294,6 +294,11 @@ def build_resume_parser() -> argparse.ArgumentParser:
         "--verbose", "-v", action="store_true", help="Print saved verification diagnostics"
     )
     parser.add_argument(
+        "--inspect",
+        action="store_true",
+        help="Inspect the most recent saved diagnostic log without running the loop",
+    )
+    parser.add_argument(
         "--json", dest="output_json", action="store_true", help="Output structured JSON"
     )
     group = parser.add_mutually_exclusive_group()
@@ -656,6 +661,7 @@ def _run_resume(argv: list[str]) -> None:
         model_chain=args.model_chain,
         agent_timeout=args.agent_timeout,
         interactive=args.interactive,
+        inspect_only=args.inspect,
     )
     sys.exit(code)
 

@@ -98,6 +98,22 @@ stops with `blocked` rather than looping forever. Force a specific mode with
 `--interactive` / `--no-interactive`; under `--json` interactive mode is always
 off.
 
+## Inspecting diagnostics without rerunning work
+
+`sisyphusfy resume --inspect` reads the most recent diagnostic log
+under `<project>/.sisyphusfy/logs/` and prints it without starting a
+new agent iteration. The log directory is shared by every component;
+files are named after their component (`agent-…`, `verify-…`,
+`hook-…`, `workflow-…`) so an agent failure never gets confused with
+a verification log. When no log exists, the command reports a clear
+"no saved diagnostics" state and returns success.
+
+`--verification-timeout N` on `run` and `resume` overrides the
+default 30-second verification limit. The effective value is shown in
+both human dry-run output (`verify-timeout: Ns`) and structured
+JSON (`verification_timeout: N`) so automation can match what the
+verifier actually used.
+
 ## The command line in the diagnostic log looks "missing quotes"
 
 Sisyphusfy passes the prompt as a single argument to the subprocess (no shell),

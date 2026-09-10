@@ -20,7 +20,7 @@ from sisyphusfy.config import (
     load_config,
     resolve_verification,
 )
-from sisyphusfy.diagnostics import read_verification_log
+from sisyphusfy.diagnostics import read_verification_log, subprocess_log_dir
 from sisyphusfy.git import DiffMode, GitInspection
 from sisyphusfy.git import inspect as git_inspect
 from sisyphusfy.progress import StreamProgress, format_duration
@@ -154,8 +154,11 @@ def cmd_resume(
     max_iterations: int | None = None,
     verbose: bool = False,
     interactive: bool | None = None,
+    inspect_only: bool = False,
     **cli_overrides,
 ) -> int:
+    if inspect_only:
+        return _inspect_latest_diagnostics(project_dir, json_output=json_output)
     try:
         config = load_config(project_dir)
     except ConfigurationError as exc:
@@ -503,6 +506,7 @@ def _dry_run_output(
         "workflow_type": workflow_type,
         "openspec_dir": openspec_dir,
         "verification_command": verification.command or None,
+        "verification_timeout": config.verification_timeout,
         "verification": verification.to_dict(),
         "max_iterations": config.max_iterations,
         "agent_timeout": config.agent_timeout,
@@ -526,6 +530,7 @@ def _dry_run_output(
         if openspec_dir:
             print(f"  openspec:    {openspec_dir}")
         print(f"  verify:      {_describe_verification(verification)}")
+        print(f"  verify-timeout: {config.verification_timeout}s")
         print(f"  iterations:  {config.max_iterations}")
         print(f"  timeout:     {config.agent_timeout}s")
         print(f"  archive:     {'enabled' if config.archive_enabled else 'disabled'}")
@@ -636,6 +641,7 @@ def _execute_loop(
                 "status": "skipped",
                 "log_path": None,
             }
+        data["verification_timeout"] = config.verification_timeout
         print(json.dumps(data, indent=2))
     else:
         _print_human_result(result, config, verification)
@@ -663,6 +669,56 @@ def print_verification_log(result) -> None:
         return
     print(f"{label} diagnostics: {evidence.log_path}")
     print(text, end="" if text.endswith("\n") else "\n")
+
+
+def _inspect_latest_diagnostics(
+    project_dir: str, *, json_output: bool = False
+) -> int:
+    """Read the most recent diagnostic log without running the loop.
+
+    Returns 0 in every case — the action completed and the user can
+    tell from the output whether saved diagnostics were available.
+    """
+    log_dir = subprocess_log_dir(project_dir)
+    if not log_dir.is_dir():
+        if json_output:
+            print(json.dumps({"error": "no saved diagnostics", "log_dir": str(log_dir)}))
+        else:
+            print(f"no saved diagnostics in {log_dir}")
+        return 0
+    candidates = sorted(
+        log_dir.glob("*.log"),
+        key=lambda path: (path.stat().st_mtime, path.name),
+    )
+    if not candidates:
+        if json_output:
+            print(json.dumps({"error": "no saved diagnostics", "log_dir": str(log_dir)}))
+        else:
+            print(f"no saved diagnostics in {log_dir}")
+        return 0
+    latest = candidates[-1]
+    text = read_verification_log(latest)
+    if text is None:
+        if json_output:
+            print(json.dumps({"error": "log is missing", "log_path": str(latest)}))
+        else:
+            print(f"log is missing: {latest}")
+        return 0
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "log_path": str(latest),
+                    "component": latest.name.split("-", 1)[0],
+                    "text": text,
+                },
+                indent=2,
+            )
+        )
+    else:
+        print(f"diagnostics: {latest}")
+        print(text, end="" if text.endswith("\n") else "\n")
+    return 0
 
 
 def _print_human_result(
