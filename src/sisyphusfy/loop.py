@@ -19,6 +19,7 @@ from sisyphusfy.adapters import (
     resolve_adapter,
     try_fallback,
 )
+from sisyphusfy.config import ConfigurationError
 from sisyphusfy.diagnostics import (
     bound_output,
     make_run_id,
@@ -175,7 +176,7 @@ class ExternalCommandCompletion:
         return proc.returncode != 0
 
 
-BLOCKED_MARKERS = ("NEED_PERMISSION", "BLOCKED", "permission", "blocked")
+BLOCKED_MARKERS = ("NEED_PERMISSION", "BLOCKED")
 
 
 @dataclass
@@ -205,6 +206,8 @@ class LoopConfig:
     interactive: bool = False
     max_interactive_prompts: int = 3
     prompt_user: Callable[[str], PromptAnswer] | None = None
+    workspace_evidence: list[str] = field(default_factory=list)
+    trust_paths_outside_root: bool = False
 
 
 @dataclass
@@ -312,12 +315,54 @@ def _changed(before: dict[str, str], after: dict[str, str]) -> bool:
 
 
 def _is_blocked(result: object, markers: list[str] | None = None) -> bool:
+    """Return True only when a configured marker matches a whole line.
+
+    Markers are matched against stripped lines from the combined output so
+    ordinary prose such as "permission bits" or "blocked reviewer" no longer
+    trips the blocked path. Substring search inside a sentence is no longer
+    a heuristic.
+    """
     if markers is None:
         markers = list(BLOCKED_MARKERS)
+    if not markers:
+        return False
     stdout = getattr(result, "stdout", "") or ""
     stderr = getattr(result, "stderr", "") or ""
     combined = stdout + stderr
-    return any(marker.lower() in combined.lower() for marker in markers)
+    normalised_markers = [m.strip() for m in markers if m and m.strip()]
+    if not normalised_markers:
+        return False
+    for line in combined.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        for marker in normalised_markers:
+            if stripped == marker or _marker_token_present(stripped, marker):
+                return True
+    return False
+
+
+def _marker_token_present(line: str, marker: str) -> bool:
+    """Treat the marker as a token-boundary match inside the line.
+
+    Allows ``"NEED_PERMISSION: cannot proceed"`` to match while leaving
+    ``"permission bits"`` alone. The marker is wrapped in non-word
+    boundaries.
+    """
+    if marker not in line:
+        return False
+    idx = 0
+    while True:
+        pos = line.find(marker, idx)
+        if pos < 0:
+            return False
+        before = line[pos - 1] if pos > 0 else " "
+        after = line[pos + len(marker)] if pos + len(marker) < len(line) else " "
+        if not (before.isalnum() or before == "_") and not (
+            after.isalnum() or after == "_"
+        ):
+            return True
+        idx = pos + len(marker)
 
 
 DEFAULT_PROMPT_TEMPLATE = (
@@ -351,7 +396,7 @@ def _extract_blocker(result: object) -> str:
         for line in combined.splitlines()
         if line.strip()
         for marker in BLOCKED_MARKERS
-        if marker.lower() in line.lower()
+        if _marker_token_present(line.strip(), marker) or line.strip() == marker
     ]
     if marker_lines:
         return "\n".join(marker_lines).strip()
@@ -384,6 +429,73 @@ def _resolve_under(working_directory: str, path: str) -> str:
     if candidate.is_absolute():
         return str(candidate)
     return str((Path(working_directory) / candidate).resolve())
+
+
+def _ensure_inside_root(
+    path: str,
+    project_root: str,
+    *,
+    label: str,
+    trust_outside_root: bool,
+) -> str:
+    """Validate that ``path`` resolves inside the project root.
+
+    Raises :class:`ConfigurationError` when the resolved path escapes. An
+    explicit ``trust_outside_root`` flag short-circuits the check for
+    opt-in cases such as system-wide task lists.
+    """
+    if not path or trust_outside_root:
+        return path
+    try:
+        resolved = Path(path).resolve()
+    except OSError as exc:
+        raise ConfigurationError(
+            f"{label} path cannot be resolved: {path!r} ({exc})"
+        ) from exc
+    try:
+        resolved.relative_to(project_root)
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"{label} path escapes project root: {path!r} "
+            f"(resolves to {resolved}, root is {project_root})"
+        ) from exc
+    return str(resolved)
+
+
+def _workspace_snapshot(
+    working_directory: str,
+    patterns: list[str],
+) -> dict[str, str]:
+    """Snapshot the content of files matching the configured patterns.
+
+    A single source-of-truth is required so two iterations can be
+    diffed: the snapshot is keyed by the relative path of every file
+    that matched one of the glob patterns. Missing files are omitted.
+    """
+    if not patterns:
+        return {}
+    root = Path(working_directory)
+    snap: dict[str, str] = {}
+    for pattern in patterns:
+        for path in sorted(root.glob(pattern)):
+            if not path.is_file():
+                continue
+            try:
+                rel = path.relative_to(root).as_posix()
+            except ValueError:
+                continue
+            try:
+                snap[rel] = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+    return snap
+
+
+def _has_workspace_change(
+    before: dict[str, str], after: dict[str, str]
+) -> bool:
+    """Return True if any tracked workspace file changed."""
+    return before != after
 
 
 def _scoped_workflow_config(
@@ -483,10 +595,26 @@ def run_loop(config: LoopConfig) -> LoopResult:
 
 def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> LoopResult:
     working_directory = str(Path(config.working_directory).resolve())
-    task_path = _resolve_under(working_directory, config.task_path)
-    handoff_path = (
-        _resolve_under(working_directory, config.handoff_path) if config.handoff_path else None
-    )
+    trust_outside = config.trust_paths_outside_root
+    try:
+        task_path = _ensure_inside_root(
+            _resolve_under(working_directory, config.task_path) if config.task_path else "",
+            working_directory,
+            label="task_path",
+            trust_outside_root=trust_outside,
+        )
+        handoff_path = (
+            _ensure_inside_root(
+                _resolve_under(working_directory, config.handoff_path),
+                working_directory,
+                label="handoff_path",
+                trust_outside_root=trust_outside,
+            )
+            if config.handoff_path
+            else None
+        )
+    except ConfigurationError as exc:
+        raise ConfigurationError(str(exc)) from exc
 
     adapter: AgentAdapter | None = None
     if config.adapter_config is not None:
@@ -710,6 +838,9 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
     completed_iteration = 0
     try:
         prev_state = _snapshot(task_path, handoff_path)
+        prev_workspace = _workspace_snapshot(
+            working_directory, config.workspace_evidence
+        )
 
         for i in range(1, config.max_iterations + 1):
             completed_iteration = i
@@ -844,15 +975,31 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
 
             curr_state = _snapshot(task_path, handoff_path)
             if not _changed(prev_state, curr_state):
-                return LoopResult(
-                    stop_reason=LoopStopReason.UNCHANGED_STATE,
-                    iterations=i,
-                    run_records=run_records,
-                    final_task_path=task_path,
-                    final_handoff_path=handoff_path,
-                    model_attempts=all_model_attempts,
-                )
-            prev_state = curr_state
+                if config.workspace_evidence:
+                    curr_workspace = _workspace_snapshot(
+                        working_directory, config.workspace_evidence
+                    )
+                    if not _has_workspace_change(prev_workspace, curr_workspace):
+                        return LoopResult(
+                            stop_reason=LoopStopReason.UNCHANGED_STATE,
+                            iterations=i,
+                            run_records=run_records,
+                            final_task_path=task_path,
+                            final_handoff_path=handoff_path,
+                            model_attempts=all_model_attempts,
+                        )
+                    prev_workspace = curr_workspace
+                else:
+                    return LoopResult(
+                        stop_reason=LoopStopReason.UNCHANGED_STATE,
+                        iterations=i,
+                        run_records=run_records,
+                        final_task_path=task_path,
+                        final_handoff_path=handoff_path,
+                        model_attempts=all_model_attempts,
+                    )
+            else:
+                prev_state = curr_state
 
     except KeyboardInterrupt:
         return LoopResult(

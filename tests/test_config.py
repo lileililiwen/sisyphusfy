@@ -39,10 +39,12 @@ class TestLoadConfig:
         assert config.max_iterations == 5
         assert config.model_chain == []
 
-    def test_invalid_toml_uses_defaults(self, tmp_path: Path) -> None:
+    def test_invalid_toml_raises(self, tmp_path: Path) -> None:
+        from sisyphusfy.config import ConfigurationError
+
         (tmp_path / ".sisyphusfy.toml").write_text("{{{{invalid")
-        config = load_config(str(tmp_path))
-        assert config.adapter == "opencode"
+        with pytest.raises(ConfigurationError, match="malformed"):
+            load_config(str(tmp_path))
 
     def test_missing_config_file_uses_defaults(self, tmp_path: Path) -> None:
         config = load_config(str(tmp_path))

@@ -17,6 +17,16 @@ class WorkflowError(Exception):
     pass
 
 
+def _is_checked_checkbox(stripped: str) -> bool:
+    """Return True for supported uppercase/lowercase checked checkbox lines."""
+    return stripped.startswith(("- [x]", "- [X]"))
+
+
+def _is_unchecked_checkbox(stripped: str) -> bool:
+    """Return True for supported unchecked checkbox lines (``- [ ]``)."""
+    return stripped.startswith("- [ ]")
+
+
 @runtime_checkable
 class WorkflowAdapter(Protocol):
     def has_work(self) -> bool: ...
@@ -77,9 +87,9 @@ class MarkdownChecklistAdapter:
         unchecked = 0
         for line in self._content.splitlines():
             stripped = line.strip()
-            if stripped.startswith(("- [x]", "- [X]")):
+            if _is_checked_checkbox(stripped):
                 checked += 1
-            elif stripped.startswith("- [") and "]" in stripped[3:]:
+            elif _is_unchecked_checkbox(stripped):
                 unchecked += 1
         return checked, unchecked
 
@@ -262,9 +272,9 @@ class OpenSpecAdapter:
         unchecked = 0
         for line in self._tasks_content.splitlines():
             stripped = line.strip()
-            if stripped.startswith("- [x]"):
+            if _is_checked_checkbox(stripped):
                 checked += 1
-            elif stripped.startswith("- [ ]"):
+            elif _is_unchecked_checkbox(stripped):
                 unchecked += 1
         return checked, unchecked
 

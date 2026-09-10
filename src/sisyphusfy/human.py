@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from sisyphusfy.config import (
+    ConfigurationError,
     SisyphusConfig,
     VerificationResolution,
     VerificationSource,
@@ -71,7 +72,15 @@ def cmd_run(
     interactive: bool | None = None,
     **cli_overrides,
 ) -> int:
-    config = load_config(project_dir)
+    try:
+        config = load_config(project_dir)
+    except ConfigurationError as exc:
+        msg = str(exc)
+        if json_output:
+            print(json.dumps({"error": msg, "configuration_failure": True}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 2
     if max_iterations is not None:
         config.max_iterations = max_iterations
     config = apply_cli_overrides(config, **cli_overrides)
@@ -147,7 +156,15 @@ def cmd_resume(
     interactive: bool | None = None,
     **cli_overrides,
 ) -> int:
-    config = load_config(project_dir)
+    try:
+        config = load_config(project_dir)
+    except ConfigurationError as exc:
+        msg = str(exc)
+        if json_output:
+            print(json.dumps({"error": msg, "configuration_failure": True}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 2
     if max_iterations is not None:
         config.max_iterations = max_iterations
     config = apply_cli_overrides(config, **cli_overrides)
@@ -201,7 +218,15 @@ def cmd_status(
     json_output: bool = False,
     show_diff: bool = False,
 ) -> int:
-    config = load_config(project_dir)
+    try:
+        config = load_config(project_dir)
+    except ConfigurationError as exc:
+        msg = str(exc)
+        if json_output:
+            print(json.dumps({"error": msg, "configuration_failure": True}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 2
     task_path = discover_task_path(project_dir)
     handoff_path = discover_handoff_path(project_dir, config)
     openspec_dir = discover_openspec_change(project_dir)
@@ -368,7 +393,15 @@ def _print_git_snapshot(
 
 
 def cmd_doctor(project_dir: str = ".", json_output: bool = False) -> int:
-    config = load_config(project_dir)
+    try:
+        config = load_config(project_dir)
+    except ConfigurationError as exc:
+        msg = str(exc)
+        if json_output:
+            print(json.dumps({"error": msg, "configuration_failure": True}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 2
     issues: list[str] = []
     warnings: list[str] = []
 

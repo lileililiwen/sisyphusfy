@@ -23,6 +23,15 @@ _PROJECT_CONFIG = ".sisyphusfy.toml"
 _USER_CONFIG_DIR = ".config/sisyphusfy"
 _USER_CONFIG_FILE = "config.toml"
 
+
+class ConfigurationError(Exception):
+    """Raised when project or user configuration cannot be parsed.
+
+    The error message names the source file and the parse problem so the
+    CLI can surface it instead of silently falling back to defaults.
+    """
+
+
 DEFAULT_CONFIG = {
     "adapter": "opencode",
     "model_chain": [],
@@ -80,8 +89,16 @@ def _load_toml(path: Path) -> dict:
     try:
         with open(path, "rb") as f:
             return tomllib.load(f)  # type: ignore[union-attr]
-    except (FileNotFoundError, PermissionError, tomllib.TOMLDecodeError):
+    except FileNotFoundError:
         return {}
+    except PermissionError as exc:
+        raise ConfigurationError(
+            f"cannot read configuration file {path}: {exc}"
+        ) from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigurationError(
+            f"malformed TOML in {path}: {exc}"
+        ) from exc
 
 
 def _user_config_path() -> Path | None:
@@ -95,7 +112,7 @@ def load_config(project_dir: str = ".") -> SisyphusConfig:
     project_path = Path(project_dir).resolve()
     user_path = _user_config_path()
 
-    user_data = {}
+    user_data: dict = {}
     if user_path is not None:
         user_data = _load_toml(user_path)
 

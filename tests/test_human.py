@@ -242,6 +242,7 @@ class TestBackwardCompatibility:
         argv = [
             "loop",
             "--task-path", str(task_path),
+            "--working-directory", str(tmp_path),
             "--completion-strategy", "markdown",
             "--max-iterations", "1",
             "--",

@@ -67,8 +67,11 @@ class TestMarkdownChecklistAdapter:
         task_path = tmp_path / "task.md"
         task_path.write_text("- [x] valid\n- [] invalid\n- [  ] invalid\n- [X] uppercase\n")
         adapter = MarkdownChecklistAdapter(task_path=str(task_path))
-        assert adapter.is_complete() is False
-        assert adapter.has_work() is True
+        # Only the supported variants are counted: - [x], - [X], and - [ ].
+        # - [] and - [  ] are malformed and ignored, so two checked items
+        # and zero unchecked items leave the task complete.
+        assert adapter.is_complete() is True
+        assert adapter.has_work() is False
 
     def test_explain_returns_status(self, tmp_path: Path) -> None:
         task_path = tmp_path / "task.md"

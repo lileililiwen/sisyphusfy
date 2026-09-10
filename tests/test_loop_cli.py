@@ -31,6 +31,7 @@ class TestLoopCLI:
         argv = [
             "loop",
             "--task-path", str(task_path),
+            "--working-directory", str(tmp_path),
             "--completion-strategy", "markdown",
             "--max-iterations", "1",
             "--",
@@ -53,6 +54,7 @@ class TestLoopCLI:
         argv = [
             "loop",
             "--task-path", str(task_path),
+            "--working-directory", str(tmp_path),
             "--completion-strategy", "markdown",
             "--max-iterations", "1",
             "--json",
@@ -85,6 +87,7 @@ class TestLoopCLI:
             "loop",
             "--task-path", str(task_path),
             "--handoff-path", str(handoff_path),
+            "--working-directory", str(tmp_path),
             "--completion-strategy", "markdown",
             "--max-iterations", "1",
             "--",
@@ -113,6 +116,7 @@ class TestLoopCLI:
         argv = [
             "loop",
             "--task-path", str(task_path),
+            "--working-directory", str(tmp_path),
             "--verification-command",
         ] + verify_cmd + [
             "--completion-strategy", "markdown",

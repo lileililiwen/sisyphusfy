@@ -202,6 +202,16 @@ by an external tool is picked up.
 directory; commands run in that directory. Under `--dry-run` the loop never
 calls an adapter that would execute a subprocess.
 
+### Path boundaries
+
+The loop's configured `task_path`, `handoff_path`, and workflow paths must
+resolve inside the project directory (`--working-directory`). A path that
+escapes via `..` or an absolute path outside the root stops the run with a
+`ConfigurationError` before the agent is invoked. Set
+`LoopConfig.trust_paths_outside_root = True` (or pass the equivalent
+project-level opt-in) when a project legitimately stores state outside its
+root, for example a shared system-wide checklist.
+
 Command-driven adapters report themselves through
 `adapter_runs_commands(adapter)`. A custom adapter that runs a command should
 expose `runs_commands = True` (or a `check_command` / `validation_command`
