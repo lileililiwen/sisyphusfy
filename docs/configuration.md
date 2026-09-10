@@ -84,6 +84,37 @@ flag, log path) plus truncated output. Read the full streams with
 A passing verification command means that command passed. It is not a browser,
 API, database, or production smoke test unless the command you configure is one.
 
+## Repository inspection
+
+`sisyphusfy status --diff` and the dedicated `sisyphusfy diff` subcommand run
+a small, read-only Git inspection in the selected project directory. Both
+commands execute only `git status`, `git diff`, and `git diff --stat`, each
+bounded by a 10-second timeout. Nothing is staged, committed, or pushed.
+
+`sisyphusfy status --diff` adds a `git:` section (branch, changed-file count,
+and a short status list) to the existing status output, and JSON gains a
+`git` object alongside the existing fields.
+
+`sisyphusfy diff` is the dedicated form and supports:
+
+- `sisyphusfy diff` — show the unified diff for unstaged changes.
+- `sisyphusfy diff --staged` — show the staged (`--cached`) diff.
+- `sisyphusfy diff --stat` — show per-file change statistics only.
+- `sisyphusfy diff --max-bytes N` — cap the diff payload (default 50 KB).
+- `sisyphusfy diff --json` — emit a structured result with `diff_text`,
+  `stat_text`, `changed_files`, `branch`, and a `truncated` flag.
+
+The unified diff is capped at `--max-bytes` (50 KB by default); when that
+limit is exceeded the result carries `truncated: true` and the body ends with
+`... (diff truncated)`. Use a larger `--max-bytes`, read the diff via JSON, or
+inspect the workspace with the Git CLI directly when you need the full
+patch.
+
+A missing `git` executable or a non-repository directory is reported as a
+structured unavailable state with a `reason` (`git_unavailable` /
+`not_a_repository` / `directory_not_found`) instead of raising an
+unhandled exception.
+
 ## Interactive blocked resolution
 
 When an agent run reports a blocked marker (see [troubleshooting](troubleshooting.md)),

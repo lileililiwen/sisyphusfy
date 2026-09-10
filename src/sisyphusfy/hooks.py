@@ -8,6 +8,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+# Bounded time for the staging subprocess. A run that hangs is a hard failure
+# (the hook reports it and does not run the commit command).
+STAGE_TIMEOUT_SECONDS = 30.0
+
 
 class HookType(str, Enum):
     ARCHIVE = "archive"
@@ -102,16 +106,93 @@ def _canonicalize_and_validate(
     return canonical
 
 
-def _stage_files(files: list[str], working_directory: str) -> None:
-    """Stage only the given files using git add."""
+def _stage_files(
+    files: list[str], working_directory: str
+) -> tuple[bool, str, str]:
+    """Stage only the given files using `git add` and return the outcome.
+
+    Returns ``(ok, stdout, stderr)``. The call is bounded by a timeout and
+    considered failed when ``git add`` exits non-zero. A non-empty stderr is
+    preserved on failure so the operator can see why staging was rejected.
+    """
     if not files:
-        return
-    subprocess.run(
-        ["git", "add", "--", *files],
-        cwd=working_directory,
-        capture_output=True,
-        check=False,
-    )
+        return True, "", ""
+    try:
+        proc = subprocess.run(
+            ["git", "add", "--", *files],
+            cwd=working_directory,
+            capture_output=True,
+            text=True,
+            timeout=STAGE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "", f"git add timed out after {STAGE_TIMEOUT_SECONDS}s"
+    except FileNotFoundError:
+        return False, "", "git executable not found on PATH"
+    except OSError as exc:
+        return False, "", str(exc)
+    if proc.returncode != 0:
+        return False, proc.stdout, proc.stderr or f"git add exited with {proc.returncode}"
+    return True, proc.stdout, proc.stderr
+
+
+def _existing_staged_paths(working_directory: str) -> list[str]:
+    """Return the pre-staged paths reported by `git diff --cached --name-only`.
+
+    The output uses repository-relative paths. An empty list means the index
+    has nothing staged; a non-zero exit (for example, no repository) is treated
+    as "no staged paths" so a missing Git or a non-repository workspace does
+    not block unrelated callers.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "--cached", "--name-only"],
+            cwd=working_directory,
+            capture_output=True,
+            text=True,
+            timeout=STAGE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return []
+    if proc.returncode != 0:
+        return []
+    return [line for line in proc.stdout.splitlines() if line]
+
+
+def _unrelated_staged_paths(
+    staged: list[str], allowed: list[str], working_directory: str
+) -> list[str]:
+    """Return staged paths that are not inside the canonicalized allowlist.
+
+    A pre-staged path is unrelated when its canonical absolute form is not
+    matched by any canonical allowed file. The check treats the working
+    directory as the trust boundary: staged paths that do not resolve inside
+    the working directory are always treated as unrelated so the hook fails
+    closed.
+    """
+    if not staged:
+        return []
+    cwd = Path(working_directory).resolve()
+    allowed_resolved: set[str] = set()
+    for path in allowed:
+        try:
+            allowed_resolved.add(str(Path(path).resolve()))
+        except OSError:
+            continue
+
+    unrelated: list[str] = []
+    for raw in staged:
+        candidate = (cwd / raw).resolve() if not Path(raw).is_absolute() else Path(raw).resolve()
+        try:
+            candidate.relative_to(cwd)
+        except ValueError:
+            unrelated.append(raw)
+            continue
+        if str(candidate) not in allowed_resolved:
+            unrelated.append(raw)
+    return unrelated
 
 
 def run_hook(config: HookConfig, dry_run: bool = False) -> HookResult:
@@ -153,7 +234,29 @@ def run_hook(config: HookConfig, dry_run: bool = False) -> HookResult:
                 command=config.command,
                 error=str(exc),
             )
-        _stage_files(staged, config.working_directory)
+        pre_staged = _existing_staged_paths(config.working_directory)
+        unrelated = _unrelated_staged_paths(
+            pre_staged, staged, config.working_directory
+        )
+        if unrelated:
+            return HookResult(
+                hook_type=config.hook_type,
+                status=HookStatus.FAILURE,
+                command=config.command,
+                error=(
+                    "refusing to commit: pre-existing index has unrelated "
+                    "staged paths: " + ", ".join(sorted(unrelated))
+                ),
+            )
+        ok, _, err = _stage_files(staged, config.working_directory)
+        if not ok:
+            return HookResult(
+                hook_type=config.hook_type,
+                status=HookStatus.FAILURE,
+                command=config.command,
+                stderr=err,
+                error=f"failed to stage allowed files: {err.strip()}",
+            )
 
     try:
         proc = subprocess.run(

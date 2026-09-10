@@ -20,6 +20,8 @@ from sisyphusfy.config import (
     resolve_verification,
 )
 from sisyphusfy.diagnostics import read_verification_log
+from sisyphusfy.git import DiffMode, GitInspection
+from sisyphusfy.git import inspect as git_inspect
 from sisyphusfy.progress import StreamProgress, format_duration
 from sisyphusfy.result import format_command
 
@@ -28,6 +30,15 @@ TIMEOUT_TAIL_LINES = 5
 
 # How many characters of each trailing line a timeout report shows.
 TIMEOUT_TAIL_CHARS = 200
+
+# Default bound on the diff payload for the human CLI. The unified diff is
+# truncated to this many bytes; the truncation flag travels with both the
+# human and the structured result.
+DEFAULT_DIFF_MAX_BYTES = 50_000
+
+# How many status entries a concise status --diff print shows before
+# collapsing the rest under an "+N more" line.
+STATUS_DIFF_PREVIEW_ENTRIES = 20
 
 
 def cmd_init(project_dir: str = ".", force: bool = False, json_output: bool = False) -> int:
@@ -185,7 +196,11 @@ def cmd_resume(
     )
 
 
-def cmd_status(project_dir: str = ".", json_output: bool = False) -> int:
+def cmd_status(
+    project_dir: str = ".",
+    json_output: bool = False,
+    show_diff: bool = False,
+) -> int:
     config = load_config(project_dir)
     task_path = discover_task_path(project_dir)
     handoff_path = discover_handoff_path(project_dir, config)
@@ -224,31 +239,132 @@ def cmd_status(project_dir: str = ".", json_output: bool = False) -> int:
         "state": state,
     }
 
+    if show_diff:
+        status_data["git"] = _read_only_git_snapshot(project_dir).to_dict()
+
     if json_output:
         print(json.dumps(status_data, indent=2))
+        return 0
+
+    print(f"adapter:    {config.adapter}")
+    print(f"model_chain: {', '.join(config.model_chain) if config.model_chain else '(none)'}")
+    print(f"workflow:   {config.workflow_type}")
+    print()
+    if task_path:
+        print(f"task:       {task_path}")
     else:
-        print(f"adapter:    {config.adapter}")
-        print(f"model_chain: {', '.join(config.model_chain) if config.model_chain else '(none)'}")
-        print(f"workflow:   {config.workflow_type}")
-        print()
-        if task_path:
-            print(f"task:       {task_path}")
-        else:
-            print("task:       (none)")
-        if handoff_path:
-            print(f"handoff:    {handoff_path}")
-        else:
-            print("handoff:    (none)")
-        if openspec_dir:
-            print(f"openspec:   {openspec_dir}")
-        print()
-        if task_file_exists:
-            print(f"tasks:      {checked} checked, {unchecked} unchecked")
-            print(f"state:      {state}")
-        else:
-            print("tasks:      (no task file)")
+        print("task:       (none)")
+    if handoff_path:
+        print(f"handoff:    {handoff_path}")
+    else:
+        print("handoff:    (none)")
+    if openspec_dir:
+        print(f"openspec:   {openspec_dir}")
+    print()
+    if task_file_exists:
+        print(f"tasks:      {checked} checked, {unchecked} unchecked")
+        print(f"state:      {state}")
+    else:
+        print("tasks:      (no task file)")
+
+    if show_diff:
+        _print_git_snapshot(_read_only_git_snapshot(project_dir))
 
     return 0
+
+
+def cmd_diff(
+    project_dir: str = ".",
+    staged: bool = False,
+    stat: bool = False,
+    json_output: bool = False,
+    max_bytes: int = DEFAULT_DIFF_MAX_BYTES,
+) -> int:
+    """Show a read-only Git status and diff for the selected project.
+
+    The command is read-only. It runs no `git add`, `git commit`, or
+    `git push` and never modifies the working tree. Missing Git and
+    non-repository directories are reported as structured unavailable
+    results, not exceptions.
+    """
+    mode = DiffMode.STAGED if staged else DiffMode.UNSTAGED
+    snapshot = git_inspect(
+        project_dir,
+        mode=mode,
+        stat_only=stat,
+        max_bytes=max_bytes,
+    )
+
+    if json_output:
+        print(json.dumps({"git": snapshot.to_dict()}, indent=2))
+        return 0
+
+    _print_git_snapshot(snapshot, stat_only=stat, mode=mode)
+    return 0
+
+
+def _read_only_git_snapshot(project_dir: str) -> GitInspection:
+    """Read a snapshot of the working tree for the human CLI.
+
+    The command is `git diff` only and never touches the index. This is
+    a convenience wrapper around the read-only Git adapter.
+    """
+    return git_inspect(project_dir, mode=DiffMode.UNSTAGED)
+
+
+def _print_git_snapshot(
+    snapshot: GitInspection,
+    *,
+    stat_only: bool = False,
+    mode: DiffMode = DiffMode.UNSTAGED,
+) -> None:
+    """Render a GitInspection to the human CLI stream.
+
+    A unavailable state prints one labelled line and exits. An available
+    state prints the branch, a count of changed files, the first few
+    status entries, and (unless `stat_only` is set) a bounded unified
+    diff. The diff is always capped by the snapshot's own truncation
+    flag -- the human CLI never prints the full untruncated payload
+    unless `inspect` decided the diff fit.
+    """
+    print()
+    print("git:")
+    if not snapshot.available:
+        reason = snapshot.reason or "unavailable"
+        print(f"  inspection: {reason}")
+        return
+
+    print(f"  branch:   {snapshot.branch or '(detached)'}")
+    print(f"  changed:  {snapshot.changed_files} file(s)")
+    if snapshot.status_paths:
+        preview = snapshot.status_paths[:STATUS_DIFF_PREVIEW_ENTRIES]
+        for entry, path in zip(snapshot.status_entries[:STATUS_DIFF_PREVIEW_ENTRIES], preview):
+            print(f"    {entry.status} {path}")
+        extra = len(snapshot.status_paths) - len(preview)
+        if extra > 0:
+            print(f"    +{extra} more")
+    else:
+        print("    (clean)")
+
+    if stat_only:
+        if snapshot.stat_text:
+            print()
+            print(snapshot.stat_text)
+        return
+
+    if mode is DiffMode.STAGED:
+        label = "staged diff"
+    else:
+        label = "unstaged diff"
+    if not snapshot.diff_text:
+        print(f"  {label}: (empty)")
+        return
+    print()
+    print(f"  {label}:")
+    for line in snapshot.diff_text.splitlines():
+        print(f"    {line}")
+    if snapshot.truncated:
+        print("    ... (diff truncated)")
 
 
 def cmd_doctor(project_dir: str = ".", json_output: bool = False) -> int:

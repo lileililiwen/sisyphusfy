@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
 
 from sisyphusfy.hooks import HookConfig, HookStatus, HookType, run_hook
+
+GIT_AVAILABLE = shutil.which("git") is not None
 
 
 def _write_script(tmp: Path, name: str, body: str) -> list[str]:
@@ -14,6 +18,25 @@ def _write_script(tmp: Path, name: str, body: str) -> list[str]:
     path.write_text(textwrap.dedent(body))
     path.chmod(0o755)
     return [sys.executable, str(path)]
+
+
+def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _init_repo(repo: Path) -> None:
+    if not GIT_AVAILABLE:
+        return
+    _git(repo, "init", "--quiet", "--initial-branch=main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    _git(repo, "commit", "--allow-empty", "-m", "init", "--quiet")
 
 
 class TestCommitPathEscapeRejection:
@@ -60,6 +83,7 @@ class TestCommitPathEscapeRejection:
 
 class TestCommitStagingAllowedFiles:
     def test_allowed_file_staged(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path)
         allowed = tmp_path / "allowed.txt"
         allowed.write_text("allowed content")
 
@@ -87,6 +111,7 @@ class TestCommitStagingAllowedFiles:
         assert result.status == HookStatus.SUCCESS
 
     def test_unrelated_file_not_staged(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path)
         allowed = tmp_path / "allowed.txt"
         allowed.write_text("allowed content")
         unrelated = tmp_path / "unrelated.txt"

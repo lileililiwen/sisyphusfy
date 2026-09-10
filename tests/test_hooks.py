@@ -102,6 +102,9 @@ class TestDryRunHooks:
 
 class TestExplicitFileAllowlist:
     def test_allowlist_in_config(self, tmp_path: Path) -> None:
+        from tests.test_commit_staging import _init_repo
+
+        _init_repo(tmp_path)
         allowed = tmp_path / "allowed.txt"
         allowed.write_text("allowed")
 
@@ -167,6 +170,11 @@ class TestArchiveHook:
 
 class TestCommitHook:
     def test_commit_success(self, tmp_path: Path) -> None:
+        from tests.test_commit_staging import _init_repo
+
+        _init_repo(tmp_path)
+        allowed = tmp_path / "allowed.py"
+        allowed.write_text("x = 1\n")
         script = _write_script(
             tmp_path,
             "fake_git.py",
@@ -178,7 +186,8 @@ class TestCommitHook:
         config = HookConfig(
             hook_type=HookType.COMMIT,
             command=script,
-            allowed_files=["*.py"],
+            allowed_files=[str(allowed)],
+            working_directory=str(tmp_path),
             enabled=True,
         )
         result = run_hook(config)
@@ -224,6 +233,11 @@ class TestCommitHook:
 
 class TestCompletionPipeline:
     def test_all_hooks_run(self, tmp_path: Path) -> None:
+        from tests.test_commit_staging import _init_repo
+
+        _init_repo(tmp_path)
+        allowed = tmp_path / "allowed.py"
+        allowed.write_text("x = 1\n")
         script1 = _write_script(
             tmp_path,
             "hook1.py",
@@ -243,12 +257,14 @@ class TestCompletionPipeline:
             HookConfig(
                 hook_type=HookType.ARCHIVE,
                 command=script1,
+                working_directory=str(tmp_path),
                 enabled=True,
             ),
             HookConfig(
                 hook_type=HookType.COMMIT,
                 command=script2,
-                allowed_files=["*.py"],
+                working_directory=str(tmp_path),
+                allowed_files=[str(allowed)],
                 enabled=True,
             ),
         ]

@@ -8,7 +8,7 @@ from sisyphusfy.progress import StreamProgress
 from sisyphusfy.result import format_command
 from sisyphusfy.runner import run_agent
 
-HIGH_LEVEL_SUBCOMMANDS = {"init", "run", "resume", "status", "doctor"}
+HIGH_LEVEL_SUBCOMMANDS = {"init", "run", "resume", "status", "doctor", "diff"}
 
 # Conventional exit status for a command stopped by an interrupt.
 INTERRUPTED_EXIT_STATUS = 130
@@ -319,6 +319,35 @@ def build_status_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--project-dir", "-d", default=".", help="Project directory"
+    )
+    parser.add_argument(
+        "--diff", action="store_true", help="Include read-only Git status and diff"
+    )
+    parser.add_argument(
+        "--json", dest="output_json", action="store_true", help="Output structured JSON"
+    )
+    return parser
+
+
+def build_diff_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="sisyphusfy diff",
+        description="Show a read-only Git diff for the project",
+    )
+    parser.add_argument(
+        "--project-dir", "-d", default=".", help="Project directory"
+    )
+    parser.add_argument(
+        "--staged", action="store_true", help="Show the staged (cached) diff"
+    )
+    parser.add_argument(
+        "--stat", action="store_true", help="Show per-file change statistics only"
+    )
+    parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=None,
+        help="Truncate the diff payload to at most this many bytes",
     )
     parser.add_argument(
         "--json", dest="output_json", action="store_true", help="Output structured JSON"
@@ -639,6 +668,22 @@ def _run_status(argv: list[str]) -> None:
     code = cmd_status(
         project_dir=args.project_dir,
         json_output=args.output_json,
+        show_diff=args.diff,
+    )
+    sys.exit(code)
+
+
+def _run_diff(argv: list[str]) -> None:
+    from sisyphusfy.human import DEFAULT_DIFF_MAX_BYTES, cmd_diff
+
+    parser = build_diff_parser()
+    args = parser.parse_args(argv)
+    code = cmd_diff(
+        project_dir=args.project_dir,
+        staged=args.staged,
+        stat=args.stat,
+        json_output=args.output_json,
+        max_bytes=args.max_bytes if args.max_bytes is not None else DEFAULT_DIFF_MAX_BYTES,
     )
     sys.exit(code)
 
@@ -661,11 +706,12 @@ _SUBCOMMAND_HANDLERS = {
     "resume": _run_resume,
     "status": _run_status,
     "doctor": _run_doctor,
+    "diff": _run_diff,
 }
 
 
 def _print_top_level_help() -> None:
-    print("""usage: sisyphusfy [-h] [--json] [--dry-run] {init,run,resume,status,doctor,loop} ...
+    print("""usage: sisyphusfy [-h] [--json] [--dry-run] {init,run,resume,status,doctor,diff,loop} ...
 
 Project-agnostic supervisor for disposable AI-agent sessions.
 
@@ -675,6 +721,7 @@ subcommands:
   resume      Continue from task and handoff files
   status      Show project state and task progress
   doctor      Check project configuration and prerequisites
+  diff        Show a read-only Git status and diff
   loop        Run the durable iteration loop (advanced)
 
 low-level:
@@ -686,6 +733,8 @@ examples:
   sisyphusfy run my-change --dry-run       # preview planned actions
   sisyphusfy resume                        # continue durable loop
   sisyphusfy status                        # show project state
+  sisyphusfy status --diff                 # include Git status and diff
+  sisyphusfy diff --stat                   # concise diffstat
   sisyphusfy doctor                        # check prerequisites
   sisyphusfy -p "hello" -- echo "world"    # single agent invocation
 

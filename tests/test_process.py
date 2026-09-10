@@ -138,6 +138,7 @@ class TestTimeoutClassification:
             result.exit_status == -1
             or result.exit_status is None
             or result.exit_status == -9
+            or result.exit_status == -15
         )
 
     def test_short_timeout_returns_immediately(self, tmp_path: Path) -> None:

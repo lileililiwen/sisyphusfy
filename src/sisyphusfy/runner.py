@@ -4,12 +4,19 @@ Output is streamed line by line to optional progress callbacks while the child
 runs, and is still captured in full so results keep their evidence. Timeouts and
 interruptions stop the child through the same cleanup path and keep whatever
 output was already received.
+
+On POSIX the runner launches the child in its own process session and terminates
+the entire group on timeout or interrupt, so a grandchild outliving the agent
+is reaped. The cleanup path is bounded by the same grace periods the original
+implementation used.
 """
 
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -29,6 +36,9 @@ STOP_GRACE_SECONDS = 5.0
 
 # How long reader threads may take to drain after the child stops.
 DRAIN_GRACE_SECONDS = 5.0
+
+# How long to wait for the whole process group to be reaped after a SIGKILL.
+GROUP_STOP_GRACE_SECONDS = 5.0
 
 
 class _Activity:
@@ -114,7 +124,51 @@ def _write_stdin(stream, data: bytes) -> None:
 
 
 def _stop(proc: subprocess.Popen) -> None:
-    """Terminate a child and reap it."""
+    """Terminate the child (and its process group) and reap it.
+
+    On POSIX, the child is launched in its own session so a grandchild can be
+    reaped by signalling the whole group. The group is signalled with SIGTERM
+    first, given a short grace period, and then with SIGKILL. The runner
+    therefore reports `timeout` / `interrupted` without waiting indefinitely
+    for a long-lived descendant. On platforms where process groups are not
+    available, only the direct child is signalled -- the structured
+    classification is preserved either way.
+    """
+    group_supported = sys.platform != "win32" and proc.pid is not None
+
+    if group_supported:
+        try:
+            pgid = os.getpgid(proc.pid)
+        except OSError:
+            pgid = None
+
+        if pgid is not None:
+            try:
+                os.killpg(pgid, signal.SIGTERM)
+            except (OSError, ProcessLookupError):
+                pass
+            try:
+                proc.wait(timeout=STOP_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+            try:
+                proc.wait(timeout=GROUP_STOP_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+        return
+
+    try:
+        proc.terminate()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=STOP_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
     try:
         proc.kill()
     except OSError:
@@ -211,15 +265,21 @@ def run_agent(
     start = time.monotonic()
     progress = _Progress(on_output, on_heartbeat)
 
+    # On POSIX, launch the agent in its own session so the timeout / interrupt
+    # cleanup can signal the entire process group. The argument list is
+    # unchanged; only the lifecycle wrapper differs.
+    popen_kwargs: dict = {
+        "cwd": cwd,
+        "stdin": subprocess.PIPE,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "env": merged_env,
+    }
+    if sys.platform != "win32":
+        popen_kwargs["start_new_session"] = True
+
     try:
-        proc = subprocess.Popen(
-            command,
-            cwd=cwd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=merged_env,
-        )
+        proc = subprocess.Popen(command, **popen_kwargs)
     except FileNotFoundError as exc:
         return RunResult(
             command=command,

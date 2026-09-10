@@ -1,7 +1,7 @@
 # ci-test-lint-gates Specification
 
 ## Purpose
-TBD - created by archiving change ci-test-lint-gates. Update Purpose after archive.
+CI must run pytest and ruff on every push and pull request so lint and test failures block the change before it can merge.
 ## Requirements
 ### Requirement: Test/lint in CI
 CI SHALL run pytest and ruff on every push/PR.

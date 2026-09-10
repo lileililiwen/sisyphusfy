@@ -14,6 +14,8 @@ It is for developers who want repeatable agent-assisted development without coup
 - **Model fallback:** quota exhaustion, timeouts, and failures classified retryable can move work to the next configured model; a non-retryable failure stops the run.
 - **Evidence-based completion:** verification commands run independently of the agent and only after an iteration exits zero; agent claims are not treated as proof.
 - **Safe automation:** dry runs, structured JSON results, timeout handling, and explicit permission boundaries support CI and local use.
+- **Bounded process cleanup:** on POSIX the runner launches each agent and verifier in its own process session, so a timeout or interrupt signals the entire group and reaps a long-lived descendant before returning. The structured `timeout` / `interrupted` classification is preserved.
+- **Read-only Git inspection:** `sisyphusfy status --diff` and `sisyphusfy diff` show a bounded Git status and unified diff (default 50 KB, with a `truncated` flag) without ever staging, committing, or pushing.
 
 ## Why
 
@@ -142,6 +144,20 @@ Check project status:
 
 ```bash
 sisyphusfy status
+```
+
+Include a read-only Git status and diff in the status output:
+
+```bash
+sisyphusfy status --diff
+```
+
+Show a read-only diff (the same adapter powers a dedicated `diff` subcommand):
+
+```bash
+sisyphusfy diff --stat
+sisyphusfy diff --staged
+sisyphusfy diff --json
 ```
 
 Diagnose configuration issues:
@@ -430,10 +446,13 @@ integrations, and completion hooks are implemented and tested.
 - Configurable blocked-signal detection across stdout and stderr.
 - Opt-in archive and commit hooks with explicit file allowlists.
 - Default token-efficient prompt when no custom template is configured.
-- Human-friendly CLI: `init`, `run`, `resume`, `status`, `doctor` subcommands.
+- Human-friendly CLI: `init`, `run`, `resume`, `status`, `doctor`, `diff` subcommands.
 - Project configuration in `.sisyphusfy.toml` with documented precedence.
 - Automatic OpenSpec change discovery and task/handoff file detection.
 - Human-readable progress, fallback, blocker, and next-action output.
+- Bounded subprocess cleanup (process-group kill on timeout/interrupt) for agent and verifier.
+- Commit-hook index validation: refuses to run when the existing index has staged paths outside the canonicalized allowlist, with a bounded `git add` and a structured failure on timeout.
+- Read-only Git inspection adapter: `git status`, `git diff`, and `git diff --stat` with bounded output and a `truncated` flag; `sisyphusfy status --diff` and `sisyphusfy diff` for the human CLI.
 
 ## Name
 

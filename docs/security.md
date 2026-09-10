@@ -32,8 +32,12 @@ enable them, exactly as you would review a `Makefile` target or a CI step.
   selected with `--project-dir`. Relative paths resolve against that directory,
   so a project cannot reach outside itself by naming a relative path.
 - **Timeouts.** Every subprocess has a timeout. A timeout is a structured stop
-  reason (`timeout`), not a silent kill. The timeout report names the component,
-  the limit with explicit units, and the diagnostic log path.
+  reason (`timeout`), not a silent kill. On POSIX the runner launches the
+  child in its own process session, signals the entire group on timeout or
+  interrupt, and reaps the launched process before returning, so a
+  long-lived descendant cannot outlive the loop. The timeout report names
+  the component, the limit with explicit units, and the diagnostic log
+  path.
 - **Safe interruption.** Ctrl-C stops the running child, terminates it, and
   returns a structured `interrupted` result. Task and handoff files are left
   untouched and archive and commit hooks are skipped, so an interrupt can never
@@ -44,7 +48,12 @@ enable them, exactly as you would review a `Makefile` target or a CI step.
 - **Commit allowlist.** The commit hook refuses to run without
   `commit_allowed_files`. Allowed paths are canonicalized and must resolve
   inside the working directory; a pattern that escapes is rejected with
-  `PathEscapeError` and the hook fails.
+  `PathEscapeError` and the hook fails. Before staging, the hook inspects the
+  existing index and refuses to run when it contains a pre-staged path that is
+  not in the allowlist -- a failing allowlist check never clears or
+  overwrites the user's index. `git add` is bounded by a timeout and a
+  non-zero exit is reported as a structured failure that prevents the commit
+  command from running.
 - **Opt-in privileged operations.** Archive and commit are disabled by default.
   There is no push support and no privilege escalation; installers write to
   user-writable directories and require explicit opt-in for system-wide paths.
@@ -54,6 +63,14 @@ enable them, exactly as you would review a `Makefile` target or a CI step.
 - **Read-only detection.** Verification discovery inspects project markers and
   executable availability; it never runs a candidate verifier to see whether it
   works, and an executable without its project marker selects nothing.
+- **Read-only Git inspection.** `sisyphusfy status --diff` and the dedicated
+  `sisyphusfy diff` subcommand run only `git status`, `git diff`, and
+  `git diff --stat`, all bounded by a timeout. The diff payload is capped
+  (default 50 KB) and the structured result carries a `truncated` flag plus
+  the change statistics. A missing `git` executable or a non-repository
+  directory is reported as a structured unavailable state with a `reason`
+  (for example, `not_a_repository`), never raised as an exception. Nothing
+  is staged, committed, or pushed by these commands.
 - **Bounded diagnostics.** Verification output is written to
   `<project_dir>/.sisyphusfy/logs/` with the 20 newest files kept. Logs are
   local, are never committed or archived by Sisyphusfy, and contain no
