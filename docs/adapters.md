@@ -13,7 +13,7 @@ methods:
 class AgentAdapter(Protocol):
     def build_command(self, working_directory: str, prompt: str | None = None) -> list[str]: ...
     def supports_model(self, model: str) -> bool: ...
-    def classify_failure(self, exit_status: int, stderr: str) -> FailureClass: ...
+    def classify_failure(self, exit_status: int, output: str) -> FailureClass: ...
     def parse_error(self, output: str) -> AgentError | None: ...
 ```
 
@@ -26,6 +26,11 @@ Returns the argument list for one agent process. Rules:
 - Build a **fresh list per call**. The loop starts a new process for every
   iteration and every fallback model; a shared mutable list would leak state
   between sessions.
+- The returned list is the **entire invocation**. Sisyphusfy does not append
+  `agent_command[1:]` to it, so any argument the agent needs must already be
+  in the list. This is what stops a generic command such as
+  `agent --flag value` from running as `agent --flag value --flag value`
+  after the loop tried to "add" the same arguments back.
 - The prompt may be passed as an argument or through stdin. The runner always
   sends the prompt on stdin as well, so an adapter that ignores `prompt` still
   works with agents reading stdin.
@@ -35,9 +40,10 @@ Returns the argument list for one agent process. Rules:
 ### `supports_model(model)`
 
 Return `True` when the adapter can forward the model to the agent. Returning
-`False` skips the model during fallback instead of failing the chain.
+`False` skips the model during fallback instead of failing the chain. A
+skipped model does not appear in `model_attempts` and never calls `run_fn`.
 
-### `classify_failure(exit_status, stderr)`
+### `classify_failure(exit_status, output)`
 
 Map a finished process to a `FailureClass`:
 
@@ -47,14 +53,24 @@ Map a finished process to a `FailureClass`:
 | `RETRYABLE_PROCESS` | Process-level failure (`exit_status == -1` or `> 128`) | Continue with the next model |
 | `NON_RETRYABLE` | Task-level failure | Stop with `agent_failed`; the chain is not advanced |
 
-The built-in adapters treat these substrings in `stderr` as provider failures:
-`quota`, `rate_limit`, `rate limit`, `429`, `503`, `502`, `provider`,
-`overloaded`, `capacity`.
+`output` is the bounded **combined** stdout and stderr of the agent invocation.
+Both streams are concatenated before classification so a quota or rate-limit
+marker is detected no matter which stream the agent used; some agents print
+provider errors on stdout, not stderr. The built-in adapters treat these
+substrings in the combined output as provider failures: `quota`, `rate_limit`,
+`rate limit`, `429`, `503`, `502`, `provider`, `overloaded`, `capacity`.
 
-Exhausting every model raises `ModelChainExhausted`, which the loop reports as
-`models_exhausted` with the list of attempted models. That result is reserved
-for the case where **every** model failed retryably; a single non-retryable
-failure stops the iteration as `agent_failed` without trying the next model.
+The loop calls `classify_failure` defensively. A third-party adapter that
+still uses the old `classify_failure(exit_status, stderr)` signature is
+tolerated: the loop catches the `TypeError` and treats the failure as
+non-retryable so a stale custom adapter never crashes the supervisor and
+never rotates models silently.
+
+Exhausting every supported model raises `ModelChainExhausted`, which the loop
+reports as `models_exhausted` with the list of attempted models. That result
+is reserved for the case where **every** supported model failed retryably;
+a single non-retryable failure stops the iteration as `agent_failed` without
+trying the next model.
 
 ### `parse_error(output)`
 
@@ -138,9 +154,9 @@ class MyAgent:
     def supports_model(self, model: str) -> bool:
         return True
 
-    def classify_failure(self, exit_status: int, stderr: str):
+    def classify_failure(self, exit_status: int, output: str):
         from sisyphusfy.adapters import FailureClass
-        if "quota" in stderr.lower():
+        if "quota" in (output or "").lower():
             return FailureClass.RETRYABLE_PROVIDER
         return FailureClass.NON_RETRYABLE
 

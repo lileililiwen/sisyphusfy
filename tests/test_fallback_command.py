@@ -6,7 +6,14 @@ import sys
 import textwrap
 from pathlib import Path
 
-from sisyphusfy.adapters import GenericCommandAdapter, ModelChainExhausted, try_fallback
+import pytest
+
+from sisyphusfy.adapters import (
+    AdapterConfig,
+    GenericCommandAdapter,
+    ModelChainExhausted,
+    try_fallback,
+)
 from sisyphusfy.loop import (
     LoopConfig,
     LoopStopReason,
@@ -160,3 +167,174 @@ class TestFallbackModelReplacement:
         env_content = env_log.read_text().strip().splitlines()
         assert env_content == ["model-a"]
         assert result.model_attempts == ["model-a"]
+
+
+class TestFallbackClassifiesCombinedOutput:
+    def test_quota_on_stdout_advances_chain(self, tmp_path: Path) -> None:
+        """A retryable marker on stdout alone still triggers fallback.
+
+        Some agents print provider errors on stdout, not stderr. The
+        classifier must see both streams so a stdout-only quota error does
+        not stop the loop as ``agent_failed`` before trying the next model.
+        """
+        adapter = GenericCommandAdapter(command=["x"])
+        attempts: list[str] = []
+
+        def run_fn(model: str = "default") -> object:
+            attempts.append(model)
+
+            class R:
+                exit_status = 1
+                stdout = "quota exceeded" if model == "model-a" else ""
+                stderr = ""
+                timed_out = False
+            return R()
+
+        result, returned_attempts = try_fallback(
+            adapter, ["model-a", "model-b"], "/tmp", None, run_fn
+        )
+        assert returned_attempts == ["model-a", "model-b"]
+        assert result.stdout == ""
+
+    def test_quota_split_across_streams_advances_chain(self) -> None:
+        """Markers split across stdout and stderr still classify as retryable.
+
+        The combined output is the concatenation of stdout and stderr, so
+        a provider error that the agent prints across both streams (for
+        example a header on stdout and a rate-limit message on stderr) is
+        still classified as retryable.
+        """
+        adapter = GenericCommandAdapter(command=["x"])
+        attempts: list[str] = []
+
+        def run_fn(model: str = "default") -> object:
+            attempts.append(model)
+
+            class R:
+                exit_status = 0 if model == "model-b" else 1
+                stdout = "Error: 429" if model == "model-a" else ""
+                stderr = "rate limit reached" if model == "model-a" else ""
+                timed_out = False
+            return R()
+
+        result, returned_attempts = try_fallback(
+            adapter, ["model-a", "model-b"], "/tmp", None, run_fn
+        )
+        assert returned_attempts == ["model-a", "model-b"]
+        assert result.exit_status == 0
+
+    def test_non_retryable_stops_chain_with_no_retryable_classification(self) -> None:
+        """A task-level failure stops the chain after one attempt.
+
+        The classifier must not invent a retryable classification from
+        arbitrary output; only configured markers classify as retryable.
+        """
+        adapter = GenericCommandAdapter(command=["x"])
+        attempts: list[str] = []
+
+        def run_fn(model: str = "default") -> object:
+            attempts.append(model)
+
+            class R:
+                exit_status = 1
+                stdout = "permission denied"
+                stderr = ""
+                timed_out = False
+            return R()
+
+        _result, returned_attempts = try_fallback(
+            adapter, ["model-a", "model-b"], "/tmp", None, run_fn
+        )
+        assert returned_attempts == ["model-a"]
+
+
+class TestFallbackUnsupportedModel:
+    def test_unsupported_model_is_skipped(self) -> None:
+        """A model rejected by ``supports_model`` is skipped, not failed.
+
+        The skipped model must not appear in the attempt list and must not
+        call ``run_fn``. The chain advances to the next supported model.
+        """
+        adapter = GenericCommandAdapter(command=["x"])
+        adapter.supports_model = lambda m: m != "skip-me"  # type: ignore[method-assign]
+        attempts: list[str] = []
+
+        def run_fn(model: str = "default") -> object:
+            attempts.append(model)
+
+            class R:
+                exit_status = 1
+                stdout = ""
+                stderr = "quota exceeded"
+                timed_out = False
+            return R()
+
+        try:
+            try_fallback(
+                adapter,
+                ["model-a", "skip-me", "model-b"],
+                "/tmp",
+                None,
+                run_fn,
+            )
+        except ModelChainExhausted as exc:
+            returned_attempts = exc.attempts
+        else:
+            returned_attempts = []
+
+        assert returned_attempts == ["model-a", "model-b"]
+        assert "skip-me" not in returned_attempts
+        assert attempts == ["model-a", "model-b"]
+
+    def test_all_unsupported_raises_exhausted(self) -> None:
+        """Exhausting all models with no run raises the exhausted signal."""
+        adapter = GenericCommandAdapter(command=["x"])
+        adapter.supports_model = lambda m: False  # type: ignore[method-assign]
+
+        def run_fn(model: str = "default") -> object:  # pragma: no cover - never called
+            raise AssertionError("run_fn must not be called")
+
+        with pytest.raises(ModelChainExhausted) as exc_info:
+            try_fallback(adapter, ["a", "b"], "/tmp", None, run_fn)
+        assert exc_info.value.attempts == []
+
+
+class TestGenericAdapterNoDuplication:
+    def test_configured_command_is_not_duplicated(self, tmp_path: Path) -> None:
+        """Generic adapter's configured command is the complete command.
+
+        The configured ``command`` is the entire invocation; the loop must
+        not append ``agent_command[1:]`` on top, or every configured
+        argument appears twice.
+        """
+        task_path = tmp_path / "task.md"
+        task_path.write_text("- [ ] work\n")
+        cmd_log = tmp_path / "cmd.log"
+
+        cmd = _write_script(
+            tmp_path,
+            "agent.py",
+            f"""\
+            import sys
+            with open("{cmd_log}", "w") as f:
+                f.write(repr(sys.argv[1:]) + "\\n")
+            """,
+        )
+
+        config = LoopConfig(
+            agent_command=cmd,
+            working_directory=str(tmp_path),
+            task_path=str(task_path),
+            prompt_template="do work",
+            max_iterations=1,
+            adapter_config=AdapterConfig(
+                name="generic", command=cmd + ["--flag", "value"]
+            ),
+            completion_strategy=MarkdownCheckboxCompletion(),
+        )
+
+        run_loop(config)
+        logged = cmd_log.read_text().strip()
+        # ``--flag value`` must appear exactly once, not duplicated.
+        assert logged.count("'--flag'") == 1
+        assert logged.count("'value'") == 1

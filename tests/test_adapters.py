@@ -131,6 +131,46 @@ class TestGenericCommandAdapter:
         cls = adapter.classify_failure(1, "File not found")
         assert cls == FailureClass.NON_RETRYABLE
 
+    def test_classify_combined_output_marks_retryable(self) -> None:
+        """The classifier sees the bounded combined stdout+stderr.
+
+        Under the new contract ``classify_failure`` receives the combined
+        output, so a retryable marker in either stream classifies as
+        ``RETRYABLE_PROVIDER`` regardless of which stream it was on.
+        """
+        adapter = GenericCommandAdapter(command=["x"])
+        cls = adapter.classify_failure(1, "rate limit on stdout\n")
+        assert cls == FailureClass.RETRYABLE_PROVIDER
+
+    def test_classify_combined_output_marks_non_retryable(self) -> None:
+        """A task-level failure stays non-retryable in combined output.
+
+        The classifier must not invent a retryable classification from
+        arbitrary text; only configured markers classify as retryable.
+        """
+        adapter = GenericCommandAdapter(command=["x"])
+        cls = adapter.classify_failure(1, "permission denied on stdout\n")
+        assert cls == FailureClass.NON_RETRYABLE
+
+
+class TestOpenCodeAdapterCombinedOutput:
+    def test_classify_quota_via_combined_output(self) -> None:
+        adapter = OpenCodeAdapter()
+        cls = adapter.classify_failure(1, "quota exceeded on stdout")
+        assert cls == FailureClass.RETRYABLE_PROVIDER
+
+    def test_classify_signal_exit(self) -> None:
+        adapter = OpenCodeAdapter()
+        cls = adapter.classify_failure(-1, "")
+        assert cls == FailureClass.RETRYABLE_PROCESS
+
+
+class TestCodeBuddyAdapterCombinedOutput:
+    def test_classify_quota_via_combined_output(self) -> None:
+        adapter = CodeBuddyAdapter()
+        cls = adapter.classify_failure(1, "quota exceeded on stdout")
+        assert cls == FailureClass.RETRYABLE_PROVIDER
+
 
 class TestTryFallback:
     def test_first_model_succeeds(self) -> None:

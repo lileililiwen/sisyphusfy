@@ -24,7 +24,19 @@ class AgentAdapter(Protocol):
 
     def supports_model(self, model: str) -> bool: ...
 
-    def classify_failure(self, exit_status: int, stderr: str) -> FailureClass: ...
+    def classify_failure(
+        self, exit_status: int, output: str
+    ) -> FailureClass:
+        """Map a finished process to a ``FailureClass``.
+
+        ``output`` is the bounded combined stdout and stderr of the agent
+        invocation. Both streams are concatenated before classification so
+        an adapter sees a quota or rate-limit marker regardless of which
+        stream the agent used. Adapters that still expect a single
+        ``stderr`` argument are tolerated by the loop: a ``TypeError`` is
+        caught and the failure is treated as non-retryable.
+        """
+        ...
 
     def parse_error(self, output: str) -> AgentError | None: ...
 
@@ -167,6 +179,59 @@ _RETRYABLE_PROVIDER_MARKERS = (
 )
 
 
+def _classify_combined_output(exit_status: int, output: str) -> FailureClass:
+    """Map an agent run to a ``FailureClass`` from its combined output.
+
+    Provider-side retryable markers are scanned across the bounded combined
+    stdout and stderr, so a marker on either stream classifies as
+    ``RETRYABLE_PROVIDER``. Process-level signals (negative or >128 exit
+    status) classify as ``RETRYABLE_PROCESS``. Anything else is a
+    task-level non-retryable failure.
+    """
+    lower = (output or "").lower()
+    for marker in _RETRYABLE_PROVIDER_MARKERS:
+        if marker in lower:
+            return FailureClass.RETRYABLE_PROVIDER
+    if exit_status == -1 or exit_status > 128:
+        return FailureClass.RETRYABLE_PROCESS
+    return FailureClass.NON_RETRYABLE
+
+
+def _combined_output(result: object) -> str:
+    """Return the bounded combined stdout+stderr of an agent run.
+
+    The combined output is the same view the loop uses to detect blocked
+    markers and to recover structured error envelopes, so the fallback
+    classifier sees the same evidence the rest of the loop saw.
+    """
+    stdout = getattr(result, "stdout", "") or ""
+    stderr = getattr(result, "stderr", "") or ""
+    if stdout and stderr:
+        return f"{stdout}\n{stderr}"
+    return stdout or stderr or ""
+
+
+def _safe_classify_failure(
+    adapter: AgentAdapter, exit_status: int, output: str
+) -> FailureClass:
+    """Call ``adapter.classify_failure`` defensively.
+
+    A third-party adapter that still uses the old ``(exit_status, stderr)``
+    signature raises ``TypeError`` when the loop passes the combined
+    output. Treat the failure as non-retryable in that case so a stale
+    custom adapter does not crash the loop or rotate models silently.
+    """
+    classify = getattr(adapter, "classify_failure", None)
+    if classify is None:
+        return FailureClass.NON_RETRYABLE
+    try:
+        return classify(exit_status, output)
+    except TypeError:
+        return FailureClass.NON_RETRYABLE
+    except Exception:  # noqa: BLE001 - a custom adapter must not stop the loop
+        return FailureClass.NON_RETRYABLE
+
+
 class GenericCommandAdapter:
     def __init__(
         self,
@@ -186,14 +251,8 @@ class GenericCommandAdapter:
     def supports_model(self, model: str) -> bool:
         return True
 
-    def classify_failure(self, exit_status: int, stderr: str) -> FailureClass:
-        lower = stderr.lower()
-        for marker in _RETRYABLE_PROVIDER_MARKERS:
-            if marker in lower:
-                return FailureClass.RETRYABLE_PROVIDER
-        if exit_status == -1 or exit_status > 128:
-            return FailureClass.RETRYABLE_PROCESS
-        return FailureClass.NON_RETRYABLE
+    def classify_failure(self, exit_status: int, output: str) -> FailureClass:
+        return _classify_combined_output(exit_status, output)
 
     def parse_error(self, output: str) -> AgentError | None:
         return parse_error_envelope(output)
@@ -225,14 +284,8 @@ class OpenCodeAdapter:
     def supports_model(self, model: str) -> bool:
         return True
 
-    def classify_failure(self, exit_status: int, stderr: str) -> FailureClass:
-        lower = stderr.lower()
-        for marker in _RETRYABLE_PROVIDER_MARKERS:
-            if marker in lower:
-                return FailureClass.RETRYABLE_PROVIDER
-        if exit_status == -1 or exit_status > 128:
-            return FailureClass.RETRYABLE_PROCESS
-        return FailureClass.NON_RETRYABLE
+    def classify_failure(self, exit_status: int, output: str) -> FailureClass:
+        return _classify_combined_output(exit_status, output)
 
     def parse_error(self, output: str) -> AgentError | None:
         return parse_error_envelope(output)
@@ -260,14 +313,8 @@ class CodeBuddyAdapter:
     def supports_model(self, model: str) -> bool:
         return True
 
-    def classify_failure(self, exit_status: int, stderr: str) -> FailureClass:
-        lower = stderr.lower()
-        for marker in _RETRYABLE_PROVIDER_MARKERS:
-            if marker in lower:
-                return FailureClass.RETRYABLE_PROVIDER
-        if exit_status == -1 or exit_status > 128:
-            return FailureClass.RETRYABLE_PROCESS
-        return FailureClass.NON_RETRYABLE
+    def classify_failure(self, exit_status: int, output: str) -> FailureClass:
+        return _classify_combined_output(exit_status, output)
 
     def parse_error(self, output: str) -> AgentError | None:
         return parse_error_envelope(output)
@@ -340,8 +387,8 @@ def try_fallback(
 
         raw_exit = getattr(result, "exit_status", None)
         exit_status = raw_exit if raw_exit is not None else -1
-        stderr = getattr(result, "stderr", "") or ""
-        classification = adapter.classify_failure(exit_status, stderr)
+        combined = _combined_output(result)
+        classification = _safe_classify_failure(adapter, exit_status, combined)
 
         if exit_status == 0:
             return result, attempts

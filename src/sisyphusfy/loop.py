@@ -448,8 +448,6 @@ def _run_iteration(
 
     if adapter is not None:
         cmd = adapter.build_command(working_directory, prompt)
-        extra_args = agent_command[1:] if len(agent_command) > 1 else []
-        cmd.extend(extra_args)
         if model and adapter.supports_model(model):
             has_model_flag = any(a in ("--model", "-m") for a in cmd)
             if not has_model_flag:
