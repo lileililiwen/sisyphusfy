@@ -88,6 +88,34 @@ metadata plus the truncated output. Read the full streams with
 A passing verification command means that command passed. It is not a browser,
 API, database, or production smoke test unless the command you configure is one.
 
+## Context budget and handoff compaction
+
+The loop can be configured with a context budget and an optional
+handoff compactor. Both are loop-level concerns (set on `LoopConfig`
+or via the CLI), not project-level TOML values.
+
+A `ContextBudget` carries a `max_input_tokens` cap and a policy:
+
+- `"reject"` stops the run before the agent is invoked and reports
+  `stop_reason: context_budget_exceeded` with a `budget_event` of
+  `"rejected"` in the result's `context_telemetry`.
+- `"truncate"` applies a documented bounded reduction and records
+  `budget_event: "truncated"`.
+
+The core uses a `chars/4` estimate that is labelled with its
+measurement method. Adapters that know their tokeniser may attach
+`ExactUsage` to the run record; the core never fabricates exact
+numbers. JSON output exposes `context_telemetry` with per-iteration
+estimates, cumulative totals, the configured budget, the latest
+budget event, and any exact usage the adapter supplied.
+
+Fresh iterations and fallback attempts receive a rendered prompt plus
+bounded handoff recovery text — never a prior conversation
+transcript. The handoff is parsed into bounded sections (completed,
+current state, blockers, next action, relevant files, verification).
+Optional `HandoffCompactor` rewrites only the configured handoff
+file; it never silently deletes arbitrary project history.
+
 ## Repository inspection
 
 `sisyphusfy status --diff` and the dedicated `sisyphusfy diff` subcommand run

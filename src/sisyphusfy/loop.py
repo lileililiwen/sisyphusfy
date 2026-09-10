@@ -20,6 +20,14 @@ from sisyphusfy.adapters import (
     try_fallback,
 )
 from sisyphusfy.config import ConfigurationError
+from sisyphusfy.context import (
+    ContextBudget,
+    ContextEstimate,
+    ContextTelemetry,
+    ExactUsage,
+    apply_budget_to_prompt,
+    estimate_text,
+)
 from sisyphusfy.diagnostics import (
     bound_output,
     make_run_id,
@@ -61,6 +69,7 @@ class LoopStopReason(str, Enum):
     ADAPTER_ERROR = "adapter_error"
     DRY_RUN = "dry_run"
     COMMAND_NOT_FOUND = "command_not_found"
+    CONTEXT_BUDGET_EXCEEDED = "context_budget_exceeded"
 
 
 class CompletionOutcome(str, Enum):
@@ -208,6 +217,8 @@ class LoopConfig:
     prompt_user: Callable[[str], PromptAnswer] | None = None
     workspace_evidence: list[str] = field(default_factory=list)
     trust_paths_outside_root: bool = False
+    context_budget: ContextBudget | None = None
+    compact_handoff: bool = False
 
 
 @dataclass
@@ -215,6 +226,8 @@ class RunRecord:
     iteration: int
     result: object
     prompt: str = ""
+    context_estimate: ContextEstimate | None = None
+    exact_usage: ExactUsage | None = None
 
 
 @dataclass
@@ -270,6 +283,7 @@ class LoopResult:
     agent_evidence: VerificationEvidence | None = None
     agent_error: AgentError | None = None
     blocked_reason: str | None = None
+    context_telemetry: ContextTelemetry | None = None
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -299,6 +313,8 @@ class LoopResult:
             d["agent_error"] = self.agent_error.to_dict()
         if self.blocked_reason:
             d["blocked_reason"] = self.blocked_reason
+        if self.context_telemetry is not None:
+            d["context_telemetry"] = self.context_telemetry.to_dict()
         return d
 
 
@@ -379,6 +395,46 @@ def _render_prompt(template: str, **kwargs: str) -> str:
         return template.format(**kwargs)
     except KeyError:
         return template
+
+
+def _render_prompt_with_budget(
+    template: str,
+    *,
+    task_path: str,
+    handoff_path: str,
+    budget: ContextBudget | None = None,
+) -> str:
+    """Render the prompt, including bounded handoff recovery content.
+
+    Fresh sessions do not include prior conversation transcripts. The
+    optional ``budget`` is applied after the body is composed and is
+    returned unchanged; the loop reads the budget event from
+    :func:`sisyphusfy.context.apply_budget_to_prompt`.
+    """
+    body = _render_prompt(
+        template,
+        task_path=task_path,
+        handoff_path=handoff_path,
+    )
+    if budget is not None and handoff_path:
+        try:
+            from pathlib import Path as _P
+
+            path = _P(handoff_path)
+            if path.exists():
+                handoff_text = path.read_text()
+                if (
+                    budget.max_handoff_chars is not None
+                    and len(handoff_text) > budget.max_handoff_chars
+                ):
+                    handoff_text = (
+                        handoff_text[: budget.max_handoff_chars]
+                        + "\n\n[handoff truncated by context budget]"
+                    )
+                body = f"{body}\n\nHandoff recovery:\n{handoff_text}"
+        except OSError:
+            pass
+    return body
 
 
 def _extract_blocker(result: object) -> str:
@@ -587,13 +643,20 @@ def _run_iteration(
 def run_loop(config: LoopConfig) -> LoopResult:
     """Run the loop and attach the evidence from its last verification."""
     evidence: dict[str, VerificationEvidence] = {}
-    result = _run_loop(config, evidence)
+    telemetry = ContextTelemetry(budget=config.context_budget)
+    result = _run_loop(config, evidence, telemetry)
     if result.verification is None and COMPONENT_VERIFY in evidence:
         result.verification = evidence[COMPONENT_VERIFY]
+    if result.context_telemetry is None:
+        result.context_telemetry = telemetry
     return result
 
 
-def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> LoopResult:
+def _run_loop(
+    config: LoopConfig,
+    evidence: dict[str, VerificationEvidence],
+    telemetry: ContextTelemetry,
+) -> LoopResult:
     working_directory = str(Path(config.working_directory).resolve())
     trust_outside = config.trust_paths_outside_root
     try:
@@ -627,6 +690,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
                 final_task_path=task_path,
                 final_handoff_path=handoff_path,
                 adapter_error=str(exc),
+                context_telemetry=telemetry,
             )
 
     workflow_adapter = config.workflow_adapter
@@ -644,6 +708,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
                 final_task_path=task_path,
                 final_handoff_path=handoff_path,
                 adapter_error=f"workflow adapter error: {exc}",
+                context_telemetry=telemetry,
             )
 
     run_records: list[RunRecord] = []
@@ -716,6 +781,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
             model_attempts=model_attempts if model_attempts is not None else all_model_attempts,
             agent_evidence=item,
             agent_error=agent_error,
+            context_telemetry=telemetry,
         )
 
     def _blocked_stop(iteration: int, blocker: str) -> LoopResult:
@@ -728,6 +794,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
             final_handoff_path=handoff_path,
             model_attempts=all_model_attempts,
             blocked_reason=blocker,
+            context_telemetry=telemetry,
         )
 
     def _run_verification(iteration: int) -> LoopResult | None:
@@ -753,6 +820,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
                 final_task_path=task_path,
                 final_handoff_path=handoff_path,
                 model_attempts=all_model_attempts,
+                context_telemetry=telemetry,
             )
         if vr.timed_out:
             return LoopResult(
@@ -762,6 +830,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
                 final_task_path=task_path,
                 final_handoff_path=handoff_path,
                 model_attempts=all_model_attempts,
+                context_telemetry=telemetry,
             )
         if vr.classification is Classification.COMMAND_NOT_FOUND:
             return _command_failure(
@@ -776,6 +845,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
                 final_task_path=task_path,
                 final_handoff_path=handoff_path,
                 model_attempts=all_model_attempts,
+                context_telemetry=telemetry,
             )
         return None
 
@@ -804,6 +874,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
             final_handoff_path=handoff_path,
             model_attempts=all_model_attempts,
             adapter_error=message,
+            context_telemetry=telemetry,
         )
 
     def _complete(iteration: int) -> LoopResult:
@@ -816,6 +887,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
             final_handoff_path=handoff_path,
             model_attempts=all_model_attempts,
             completion_pipeline_result=pipeline_result,
+            context_telemetry=telemetry,
         )
 
     try:
@@ -828,6 +900,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
             iterations=0,
             final_task_path=task_path,
             final_handoff_path=handoff_path,
+            context_telemetry=telemetry,
         )
     if outcome is CompletionOutcome.COMPLETE:
         verification_failure = _run_verification(0)
@@ -844,11 +917,32 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
 
         for i in range(1, config.max_iterations + 1):
             completed_iteration = i
-            prompt = _render_prompt(
+            prompt = _render_prompt_with_budget(
                 config.prompt_template,
                 task_path=task_path,
                 handoff_path=handoff_path or "",
+                budget=config.context_budget,
             )
+            if config.context_budget is not None:
+                prompt, event = apply_budget_to_prompt(
+                    prompt, config.context_budget
+                )
+                if event == "rejected":
+                    telemetry.budget_event = "rejected"
+                    telemetry.record(estimate_text(prompt))
+                    return LoopResult(
+                        stop_reason=LoopStopReason.CONTEXT_BUDGET_EXCEEDED,
+                        iterations=i - 1,
+                        run_records=run_records,
+                        final_task_path=task_path,
+                        final_handoff_path=handoff_path,
+                        model_attempts=all_model_attempts,
+                        context_telemetry=telemetry,
+                    )
+                if event == "truncated":
+                    telemetry.budget_event = "truncated"
+            estimate = estimate_text(prompt)
+            telemetry.record(estimate)
 
             def _run_with_model(model: str | None = None, p: str = prompt) -> object:
                 on_output, on_heartbeat = agent_cbs
@@ -886,7 +980,12 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
             else:
                 result = _run_with_model(model=adapter.model if adapter else None)
 
-            rec = RunRecord(iteration=i, result=result, prompt=prompt)
+            rec = RunRecord(
+                iteration=i,
+                result=result,
+                prompt=prompt,
+                context_estimate=estimate,
+            )
             run_records.append(rec)
 
             if len(run_records) > config.max_run_records:
@@ -969,6 +1068,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
                     final_task_path=task_path,
                     final_handoff_path=handoff_path,
                     model_attempts=all_model_attempts,
+                    context_telemetry=telemetry,
                 )
             if outcome is CompletionOutcome.COMPLETE:
                 return _complete(i)
@@ -987,6 +1087,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
                             final_task_path=task_path,
                             final_handoff_path=handoff_path,
                             model_attempts=all_model_attempts,
+                            context_telemetry=telemetry,
                         )
                     prev_workspace = curr_workspace
                 else:
@@ -997,6 +1098,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
                         final_task_path=task_path,
                         final_handoff_path=handoff_path,
                         model_attempts=all_model_attempts,
+                        context_telemetry=telemetry,
                     )
             else:
                 prev_state = curr_state
@@ -1009,6 +1111,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
             final_task_path=task_path,
             final_handoff_path=handoff_path,
             model_attempts=all_model_attempts,
+            context_telemetry=telemetry,
         )
 
     return LoopResult(
@@ -1018,6 +1121,7 @@ def _run_loop(config: LoopConfig, evidence: dict[str, VerificationEvidence]) -> 
         final_task_path=task_path,
         final_handoff_path=handoff_path,
         model_attempts=all_model_attempts,
+        context_telemetry=telemetry,
     )
 
 
