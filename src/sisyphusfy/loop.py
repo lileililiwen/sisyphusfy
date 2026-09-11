@@ -624,16 +624,11 @@ def _run_iteration(
         env["AGENT_MODEL"] = model
 
     if adapter is not None:
-        cmd = adapter.build_command(working_directory, prompt)
-        if model and adapter.supports_model(model):
-            has_model_flag = any(a in ("--model", "-m") for a in cmd)
-            if not has_model_flag:
-                cmd.extend(["--model", model])
-            else:
-                for i, arg in enumerate(cmd):
-                    if arg in ("--model", "-m"):
-                        cmd[i + 1] = model
-                        break
+        build_for_model = getattr(adapter, "build_command_for_model", None)
+        if model is not None and callable(build_for_model):
+            cmd = build_for_model(working_directory, prompt, model)
+        else:
+            cmd = adapter.build_command(working_directory, prompt)
     else:
         cmd = list(agent_command)
     return run_agent(
@@ -980,6 +975,26 @@ def _run_loop(
                     )
                     all_model_attempts.extend(attempts)
                 except ModelChainExhausted as exc:
+                    if exc.last_result is None:
+                        # No attempt ran: every model was skipped as
+                        # unsupported. Stop with the skip list as the audit
+                        # trail instead of agent evidence there is none.
+                        skipped = getattr(exc, "skipped", []) or list(
+                            config.model_chain
+                        )
+                        return LoopResult(
+                            stop_reason=LoopStopReason.MODELS_EXHAUSTED,
+                            iterations=i,
+                            run_records=run_records,
+                            final_task_path=task_path,
+                            final_handoff_path=handoff_path,
+                            model_attempts=exc.attempts,
+                            adapter_error=(
+                                "no supported model in chain: "
+                                f"{', '.join(skipped)}"
+                            ),
+                            context_telemetry=telemetry,
+                        )
                     return _agent_stop(
                         LoopStopReason.MODELS_EXHAUSTED,
                         i,

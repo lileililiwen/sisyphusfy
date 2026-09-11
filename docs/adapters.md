@@ -6,12 +6,13 @@ loop engine. Both are protocols with a registry (agents) or a resolver
 
 ## The `AgentAdapter` protocol
 
-`sisyphusfy.adapters.AgentAdapter` is a `runtime_checkable` `Protocol` with four
+`sisyphusfy.adapters.AgentAdapter` is a `runtime_checkable` `Protocol` with five
 methods:
 
 ```python
 class AgentAdapter(Protocol):
     def build_command(self, working_directory: str, prompt: str | None = None) -> list[str]: ...
+    def build_command_for_model(self, working_directory: str, prompt: str | None, model: str) -> list[str]: ...
     def supports_model(self, model: str) -> bool: ...
     def classify_failure(self, exit_status: int, output: str) -> FailureClass: ...
     def parse_error(self, output: str) -> AgentError | None: ...
@@ -37,11 +38,22 @@ Returns the argument list for one agent process. Rules:
 - `working_directory` is the project directory selected with `--project-dir`. It
   is the process `cwd`; an adapter does not need to `cd` itself.
 
+### `build_command_for_model(working_directory, prompt, model)`
+
+Returns the argument list for one specific fallback model. The adapter owns
+its CLI grammar: it applies `model` the way its command expects, or returns
+the base command when the CLI cannot take a model (the loop still sets
+`AGENT_MODEL`). The loop calls this instead of rewriting `--model` itself, so
+construction is crash-free for every model. Custom adapters that do not
+implement it fall back to `build_command` with the model delivered via
+`AGENT_MODEL` only.
+
 ### `supports_model(model)`
 
 Return `True` when the adapter can forward the model to the agent. Returning
 `False` skips the model during fallback instead of failing the chain. A
-skipped model does not appear in `model_attempts` and never calls `run_fn`.
+skipped model never runs but stays in the `model_attempts` trail and is listed
+in `ModelChainExhausted.skipped`.
 
 ### `classify_failure(exit_status, output)`
 
@@ -118,21 +130,34 @@ satisfies `isinstance(adapter, AgentAdapter)`.
 
 ## Model behavior
 
-`model_chain` is an ordered list. For each iteration the loop calls
-`build_command` with the current model, then inspects the result:
+The adapter owns model-flag construction: for each model the loop calls
+`build_command_for_model(working_directory, prompt, model)` and invokes the
+returned command unchanged. The loop never rewrites `--model`/`-m` arguments
+itself. `AGENT_MODEL` is still set in the child environment for every run, so
+commands that cannot take a flag still learn the active model.
+
+`model_chain` is an ordered list. For each iteration the loop builds a fresh
+command per model, then inspects the result:
 
 1. exit status `0` ends the iteration successfully;
 2. a non-retryable failure stops the iteration with `agent_failed` and does not
    advance the chain; a retryable failure moves to the next model;
-3. a model rejected by `supports_model` is skipped, not failed.
+3. a model rejected by `supports_model` is skipped, not failed: the skip is
+   recorded in `ModelChainExhausted.skipped` and stays in the `model_attempts`
+   trail. When every model is skipped, the loop stops with `models_exhausted`
+   and an `adapter_error` naming the skipped models instead of agent evidence.
 
 A non-zero exit status always stops the iteration. Verification runs only after
 an iteration exits `0`, so a failed agent is never verified.
 
-The `--model` flag is appended only when the adapter reports support and the
-command does not already carry `--model` or `-m`; an existing flag is rewritten
-in place so a model is never passed twice. Fallback is per iteration: iteration
-`n + 1` starts from the first model in `model_chain` again.
+The `generic` adapter never adds a model flag unless the command opts in with
+`allow_model_flag=True` (`AdapterConfig(allow_model_flag=...)`): opted-in
+commands get `--model <model>` appended, or the value rewritten when the flag
+is already present (a trailing bare `--model` is treated as a placeholder and
+filled, never indexed past the end). Without the opt-in the command runs
+verbatim and the model travels via `AGENT_MODEL` only. Fallback is per
+iteration: iteration `n + 1` starts from the first model in `model_chain`
+again.
 
 ## Registering a custom agent adapter
 
@@ -144,9 +169,16 @@ class MyAgent:
         self.model = model
 
     def build_command(self, working_directory: str, prompt: str | None = None) -> list[str]:
+        return self.build_command_for_model(
+            working_directory, prompt, self.model or ""
+        )
+
+    def build_command_for_model(
+        self, working_directory: str, prompt: str | None, model: str
+    ) -> list[str]:
         cmd = ["my-agent", "--cwd", working_directory]
-        if self.model:
-            cmd.extend(["--model", self.model])
+        if model:
+            cmd.extend(["--model", model])
         if prompt:
             cmd.append(prompt)
         return cmd

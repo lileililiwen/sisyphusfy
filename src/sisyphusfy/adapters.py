@@ -22,6 +22,23 @@ class AgentAdapter(Protocol):
         prompt: str | None = None,
     ) -> list[str]: ...
 
+    def build_command_for_model(
+        self,
+        working_directory: str,
+        prompt: str | None,
+        model: str,
+    ) -> list[str]:
+        """Build the command for one specific fallback model.
+
+        The adapter owns its CLI grammar: it applies ``model`` the way its
+        command expects (flag, subcommand, or not at all). The loop calls
+        this instead of rewriting ``--model`` arguments itself, so command
+        construction is crash-free for every model. Commands that cannot
+        take a model flag return the base command; the loop still delivers
+        the model via the ``AGENT_MODEL`` environment variable.
+        """
+        ...
+
     def supports_model(self, model: str) -> bool: ...
 
     def classify_failure(
@@ -50,6 +67,7 @@ class AdapterConfig:
     name: str
     model: str | None = None
     command: list[str] = field(default_factory=list)
+    allow_model_flag: bool = False
 
 
 class AdapterError(Exception):
@@ -158,11 +176,15 @@ class ModelChainExhausted(Exception):
         model_chain: list[str],
         attempts: list[str],
         last_result: object | None = None,
+        skipped: list[str] | None = None,
     ) -> None:
         self.model_chain = model_chain
         self.attempts = attempts
         self.last_result = last_result
+        self.skipped = list(skipped) if skipped else []
         msg = f"all models exhausted: {', '.join(attempts)}"
+        if self.skipped:
+            msg += f" (skipped as unsupported: {', '.join(self.skipped)})"
         super().__init__(msg)
 
 
@@ -233,13 +255,24 @@ def _safe_classify_failure(
 
 
 class GenericCommandAdapter:
+    """A user-supplied command run unchanged.
+
+    The configured command is the complete invocation. A model flag is
+    only added when the command opts in via ``allow_model_flag``; otherwise
+    the active model travels via the ``AGENT_MODEL`` environment variable
+    set by the loop, so arbitrary commands are never broken by an appended
+    ``--model`` they do not accept.
+    """
+
     def __init__(
         self,
         command: list[str],
         model: str | None = None,
+        allow_model_flag: bool = False,
     ) -> None:
         self.command = command
         self.model = model
+        self.allow_model_flag = allow_model_flag
 
     def build_command(
         self,
@@ -247,6 +280,27 @@ class GenericCommandAdapter:
         prompt: str | None = None,
     ) -> list[str]:
         return list(self.command)
+
+    def build_command_for_model(
+        self,
+        working_directory: str,
+        prompt: str | None,
+        model: str,
+    ) -> list[str]:
+        cmd = list(self.command)
+        if not self.allow_model_flag:
+            return cmd
+        for i, arg in enumerate(cmd):
+            if arg in ("--model", "-m"):
+                if i + 1 < len(cmd):
+                    cmd[i + 1] = model
+                else:
+                    # Trailing flag left as a placeholder: fill the value
+                    # instead of indexing past the end.
+                    cmd.append(model)
+                return cmd
+        cmd.extend(["--model", model])
+        return cmd
 
     def supports_model(self, model: str) -> bool:
         return True
@@ -274,9 +328,17 @@ class OpenCodeAdapter:
         working_directory: str,
         prompt: str | None = None,
     ) -> list[str]:
+        return self.build_command_for_model(working_directory, prompt, self.model or "")
+
+    def build_command_for_model(
+        self,
+        working_directory: str,
+        prompt: str | None,
+        model: str,
+    ) -> list[str]:
         cmd = ["opencode", "run"]
-        if self.model:
-            cmd.extend(["--model", self.model])
+        if model:
+            cmd.extend(["--model", model])
         if prompt:
             cmd.append(prompt)
         return cmd
@@ -303,9 +365,17 @@ class CodeBuddyAdapter:
         working_directory: str,
         prompt: str | None = None,
     ) -> list[str]:
+        return self.build_command_for_model(working_directory, prompt, self.model or "")
+
+    def build_command_for_model(
+        self,
+        working_directory: str,
+        prompt: str | None,
+        model: str,
+    ) -> list[str]:
         cmd = ["codebuddy", "-p"]
-        if self.model:
-            cmd.extend(["--model", self.model])
+        if model:
+            cmd.extend(["--model", model])
         if prompt:
             cmd.append(prompt)
         return cmd
@@ -361,7 +431,11 @@ def resolve_adapter(
         )
     if config.name == "generic":
         command = config.command if config.command else (agent_command or [])
-        return GenericCommandAdapter(command=command, model=config.model)
+        return GenericCommandAdapter(
+            command=command,
+            model=config.model,
+            allow_model_flag=config.allow_model_flag,
+        )
     return cls(model=config.model)
 
 
@@ -375,12 +449,15 @@ def try_fallback(
     max_retries: int = 0,
 ) -> tuple[object, list[str]]:
     attempts: list[str] = []
+    skipped: list[str] = []
     result: object | None = None
 
     models = model_chain if model_chain else [adapter.model or "default"]
 
     for model in models:
         if not adapter.supports_model(model):
+            skipped.append(model)
+            attempts.append(model)
             continue
         attempts.append(model)
         result = run_fn(model=model)
@@ -401,5 +478,8 @@ def try_fallback(
         return result, attempts
 
     raise ModelChainExhausted(
-        model_chain=model_chain, attempts=attempts, last_result=result
+        model_chain=model_chain,
+        attempts=attempts,
+        last_result=result,
+        skipped=skipped,
     )

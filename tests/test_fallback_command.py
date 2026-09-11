@@ -10,6 +10,7 @@ import pytest
 
 from sisyphusfy.adapters import (
     AdapterConfig,
+    FailureClass,
     GenericCommandAdapter,
     ModelChainExhausted,
     try_fallback,
@@ -18,6 +19,7 @@ from sisyphusfy.loop import (
     LoopConfig,
     LoopStopReason,
     MarkdownCheckboxCompletion,
+    _run_iteration,
     run_loop,
 )
 
@@ -252,8 +254,9 @@ class TestFallbackUnsupportedModel:
     def test_unsupported_model_is_skipped(self) -> None:
         """A model rejected by ``supports_model`` is skipped, not failed.
 
-        The skipped model must not appear in the attempt list and must not
-        call ``run_fn``. The chain advances to the next supported model.
+        The skipped model stays in the attempts trail (distinguished via
+        ``skipped``) and must not call ``run_fn``. The chain advances to
+        the next supported model.
         """
         adapter = GenericCommandAdapter(command=["x"])
         adapter.supports_model = lambda m: m != "skip-me"  # type: ignore[method-assign]
@@ -269,7 +272,7 @@ class TestFallbackUnsupportedModel:
                 timed_out = False
             return R()
 
-        try:
+        with pytest.raises(ModelChainExhausted) as exc_info:
             try_fallback(
                 adapter,
                 ["model-a", "skip-me", "model-b"],
@@ -277,13 +280,9 @@ class TestFallbackUnsupportedModel:
                 None,
                 run_fn,
             )
-        except ModelChainExhausted as exc:
-            returned_attempts = exc.attempts
-        else:
-            returned_attempts = []
 
-        assert returned_attempts == ["model-a", "model-b"]
-        assert "skip-me" not in returned_attempts
+        assert exc_info.value.attempts == ["model-a", "skip-me", "model-b"]
+        assert exc_info.value.skipped == ["skip-me"]
         assert attempts == ["model-a", "model-b"]
 
     def test_all_unsupported_raises_exhausted(self) -> None:
@@ -296,7 +295,141 @@ class TestFallbackUnsupportedModel:
 
         with pytest.raises(ModelChainExhausted) as exc_info:
             try_fallback(adapter, ["a", "b"], "/tmp", None, run_fn)
-        assert exc_info.value.attempts == []
+        assert exc_info.value.attempts == ["a", "b"]
+        assert exc_info.value.skipped == ["a", "b"]
+        assert exc_info.value.last_result is None
+
+
+class TestModelFlagHardening:
+    def test_trailing_model_flag_does_not_crash(self, tmp_path: Path) -> None:
+        """A command ending in `--model` fills the value instead of IndexError (1.1)."""
+        argv_log = tmp_path / "argv.log"
+        script = _write_script(
+            tmp_path,
+            "agent.py",
+            f"""\
+            import sys
+            with open("{argv_log}", "w") as f:
+                f.write(repr(sys.argv[1:]))
+            """,
+        )
+        adapter = GenericCommandAdapter(
+            command=[*script, "--model"], allow_model_flag=True
+        )
+
+        result = _run_iteration(
+            adapter, [], str(tmp_path), "hi", 60.0, model="m-x"
+        )
+
+        assert result.exit_status == 0
+        assert argv_log.read_text().strip() == "['--model', 'm-x']"
+
+    def test_generic_without_opt_in_omits_model_flag(self, tmp_path: Path) -> None:
+        """Default generic commands get the model via env only, no flag (1.2)."""
+        argv_log = tmp_path / "argv.log"
+        env_log = tmp_path / "env.log"
+        script = _write_script(
+            tmp_path,
+            "agent.py",
+            f"""\
+            import os, sys
+            with open("{argv_log}", "w") as f:
+                f.write(repr(sys.argv[1:]))
+            with open("{env_log}", "w") as f:
+                f.write(os.environ.get("AGENT_MODEL", "none"))
+            """,
+        )
+        adapter = GenericCommandAdapter(command=script)
+
+        result = _run_iteration(
+            adapter, [], str(tmp_path), "hi", 60.0, model="m-x"
+        )
+
+        assert result.exit_status == 0
+        assert argv_log.read_text().strip() == "[]"
+        assert env_log.read_text() == "m-x"
+
+    def test_generic_with_opt_in_appends_and_replaces(self) -> None:
+        """Opted-in generic commands append or safely rewrite the flag (1.2)."""
+        assert GenericCommandAdapter(
+            command=["x"], allow_model_flag=True
+        ).build_command_for_model(".", None, "m") == ["x", "--model", "m"]
+        assert GenericCommandAdapter(
+            command=["x", "--model", "old"], allow_model_flag=True
+        ).build_command_for_model(".", None, "new") == ["x", "--model", "new"]
+        assert GenericCommandAdapter(
+            command=["x"], allow_model_flag=False
+        ).build_command_for_model(".", None, "m") == ["x"]
+
+    def test_mixed_chain_records_skips_in_order(self) -> None:
+        """Skipped models appear in attempts with skips distinguished (1.4)."""
+        adapter = GenericCommandAdapter(command=["x"])
+        adapter.supports_model = lambda m: m != "skip-me"  # type: ignore[method-assign]
+        attempted: list[str] = []
+
+        def run_fn(model: str = "default") -> object:
+            attempted.append(model)
+
+            class R:
+                exit_status = 1
+                stdout = ""
+                stderr = "quota exceeded"
+                timed_out = False
+            return R()
+
+        with pytest.raises(ModelChainExhausted) as exc_info:
+            try_fallback(adapter, ["model-a", "skip-me", "model-b"], "/tmp", None, run_fn)
+
+        assert exc_info.value.attempts == ["model-a", "skip-me", "model-b"]
+        assert exc_info.value.skipped == ["skip-me"]
+        assert attempted == ["model-a", "model-b"]
+
+    def test_loop_all_skipped_stops_cleanly(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """An all-skipped chain stops MODELS_EXHAUSTED with a reason, no crash (1.3)."""
+        import sisyphusfy.loop as loop_module
+
+        class _RejectAll:
+            model = None
+
+            def build_command(self, working_directory: str, prompt=None) -> list[str]:
+                return ["never-invoked"]
+
+            def supports_model(self, model: str) -> bool:
+                return False
+
+            def classify_failure(self, exit_status: int, output: str) -> FailureClass:
+                return FailureClass.NON_RETRYABLE
+
+            def parse_error(self, output: str):
+                return None
+
+            def diagnostic_hint(self) -> str:
+                return "stub"
+
+        monkeypatch.setattr(
+            loop_module, "resolve_adapter", lambda *a, **k: _RejectAll()
+        )
+
+        task_path = tmp_path / "task.md"
+        task_path.write_text("- [ ] work\n")
+        config = LoopConfig(
+            agent_command=["never-invoked"],
+            working_directory=str(tmp_path),
+            task_path=str(task_path),
+            prompt_template="do work",
+            max_iterations=1,
+            adapter_config=AdapterConfig(name="stub"),
+            model_chain=["a", "b"],
+        )
+
+        result = run_loop(config)
+
+        assert result.stop_reason == LoopStopReason.MODELS_EXHAUSTED
+        assert result.model_attempts == ["a", "b"]
+        assert result.adapter_error is not None
+        assert "a" in result.adapter_error and "b" in result.adapter_error
 
 
 class TestGenericAdapterNoDuplication:
