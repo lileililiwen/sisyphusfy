@@ -175,6 +175,12 @@ def build_loop_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Print hook commands without executing"
     )
     parser.add_argument(
+        "--compact-handoff",
+        dest="compact_handoff",
+        action="store_true",
+        help="Compact the handoff file before rendering each iteration",
+    )
+    parser.add_argument(
         "--verbose", "-v", action="store_true", help="Print saved verification diagnostics"
     )
     parser.add_argument(
@@ -249,6 +255,13 @@ def build_run_parser() -> argparse.ArgumentParser:
         "--verbose", "-v", action="store_true", help="Print saved verification diagnostics"
     )
     parser.add_argument(
+        "--compact-handoff",
+        dest="compact_handoff",
+        action="store_true",
+        default=None,
+        help="Compact the handoff file before rendering each iteration",
+    )
+    parser.add_argument(
         "--json", dest="output_json", action="store_true", help="Output structured JSON"
     )
     group = parser.add_mutually_exclusive_group()
@@ -297,6 +310,13 @@ def build_resume_parser() -> argparse.ArgumentParser:
         "--inspect",
         action="store_true",
         help="Inspect the most recent saved diagnostic log without running the loop",
+    )
+    parser.add_argument(
+        "--compact-handoff",
+        dest="compact_handoff",
+        action="store_true",
+        default=None,
+        help="Compact the handoff file before rendering each iteration",
     )
     parser.add_argument(
         "--json", dest="output_json", action="store_true", help="Output structured JSON"
@@ -580,6 +600,7 @@ def _run_loop(argv: list[str] | None) -> None:
         dry_run=args.dry_run,
         workflow_config=workflow_config,
         interactive=interactive,
+        compact_handoff=args.compact_handoff,
         # Progress is streamed for human output only; JSON stays machine-readable.
         progress=None if args.output_json else StreamProgress(stream=sys.stderr),
     )
@@ -642,6 +663,7 @@ def _run_run(argv: list[str]) -> None:
         model_chain=args.model_chain,
         agent_timeout=args.agent_timeout,
         interactive=args.interactive,
+        compact_handoff=args.compact_handoff,
     )
     sys.exit(code)
 
@@ -662,6 +684,7 @@ def _run_resume(argv: list[str]) -> None:
         agent_timeout=args.agent_timeout,
         interactive=args.interactive,
         inspect_only=args.inspect,
+        compact_handoff=args.compact_handoff,
     )
     sys.exit(code)
 

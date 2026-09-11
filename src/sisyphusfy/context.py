@@ -124,6 +124,7 @@ class ContextTelemetry:
     exact_usage: ExactUsage | None = None
     budget: ContextBudget | None = None
     budget_event: str | None = None
+    compactions: list[HandoffCompactionResult] = field(default_factory=list)
 
     @property
     def estimated_total_input_tokens(self) -> int:
@@ -153,6 +154,10 @@ class ContextTelemetry:
             }
         if self.budget_event is not None:
             d["budget_event"] = self.budget_event
+        if self.compactions:
+            d["compactions"] = [c.to_dict() for c in self.compactions]
+            last = self.compactions[-1]
+            d["last_compaction"] = last.to_dict()
         return d
 
 
@@ -322,6 +327,11 @@ def apply_budget_to_prompt(
     the original (so the caller can decide what to do) and the event
     is ``"rejected"``; the caller is responsible for stopping the
     invocation.
+
+    Under ``"truncate"`` the handoff recovery section (``Handoff
+    recovery:``) is shrunk first so the fixed instructions survive;
+    only when the instructions alone still exceed the budget does the
+    whole body get cut. The truncation marker is always present.
     """
     estimate = estimate_text(prompt)
     if estimate.tokens_estimated <= budget.max_input_tokens:
@@ -335,6 +345,23 @@ def apply_budget_to_prompt(
     if policy is BudgetPolicy.REJECT:
         return prompt, "rejected"
     max_chars = budget.max_input_tokens * 4
-    return prompt[:max_chars] + (
-        f"\n\n[prompt truncated at {max_chars} chars by context budget]"
-    ), "truncated"
+    marker = "\n\n[prompt truncated at {n} chars by context budget]"
+    marker_text = marker.format(n=max_chars)
+    recovery_token = "Handoff recovery:"
+    if recovery_token in prompt:
+        head, sep, tail = prompt.partition(recovery_token)
+        # `head` holds the fixed instructions; `tail` is the variable
+        # handoff recovery. Keep `head` intact and cut `tail` first.
+        if len(head) + len(recovery_token) < max_chars:
+            keep_tail = max_chars - len(head) - len(sep) - len(marker_text)
+            keep_tail = max(keep_tail, 0)
+            truncated_tail = tail[:keep_tail]
+            handoff_note = "\n\n[handoff recovery truncated by context budget]"
+            if len(head + sep + truncated_tail + handoff_note + marker_text) <= max_chars + len(
+                handoff_note
+            ):
+                new_prompt = f"{head}{sep}{truncated_tail}{handoff_note}{marker_text}"
+            else:
+                new_prompt = f"{head}{sep}{truncated_tail}{marker_text}"
+            return new_prompt, "truncated"
+    return prompt[:max_chars] + marker_text, "truncated"

@@ -44,6 +44,7 @@ DEFAULT_CONFIG = {
     "archive_enabled": False,
     "commit_enabled": False,
     "commit_allowed_files": [],
+    "compact_handoff": False,
 }
 
 
@@ -60,6 +61,7 @@ class SisyphusConfig:
     archive_enabled: bool = False
     commit_enabled: bool = False
     commit_allowed_files: list[str] = field(default_factory=list)
+    compact_handoff: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -74,6 +76,7 @@ class SisyphusConfig:
             "archive_enabled": self.archive_enabled,
             "commit_enabled": self.commit_enabled,
             "commit_allowed_files": self.commit_allowed_files,
+            "compact_handoff": self.compact_handoff,
         }
 
 
@@ -133,6 +136,7 @@ def load_config(project_dir: str = ".") -> SisyphusConfig:
         archive_enabled=bool(merged["archive_enabled"]),
         commit_enabled=bool(merged["commit_enabled"]),
         commit_allowed_files=merged["commit_allowed_files"],
+        compact_handoff=bool(merged.get("compact_handoff", False)),
     )
 
 
@@ -180,6 +184,7 @@ def init_project_config(project_dir: str = ".", force: bool = False) -> Path:
         f"archive_enabled = {_toml_value(DEFAULT_CONFIG['archive_enabled'])}",
         f"commit_enabled = {_toml_value(DEFAULT_CONFIG['commit_enabled'])}",
         f"commit_allowed_files = {_toml_value(DEFAULT_CONFIG['commit_allowed_files'])}",
+        f"compact_handoff = {_toml_value(DEFAULT_CONFIG['compact_handoff'])}",
         "",
     ]
 

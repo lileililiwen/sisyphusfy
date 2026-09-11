@@ -42,6 +42,7 @@ file.
 | `archive_enabled` | boolean | `false` | Enable the archive completion hook. | Opt-in. Runs `openspec archive` after completion and verification succeed. |
 | `commit_enabled` | boolean | `false` | Enable the commit completion hook. | Opt-in. Requires `commit_allowed_files`; without it the hook is skipped. |
 | `commit_allowed_files` | list of path globs | `[]` | Files the commit hook may stage. | Paths are canonicalized and must resolve inside the project directory; escapes are rejected. |
+| `compact_handoff` | boolean | `false` | Compact the handoff file with `HandoffCompactor` before rendering each iteration's prompt. | Opt-in. Rewrites only the configured handoff file; counts recorded on telemetry. |
 
 Task files are discovered, not configured: `tasks.md`, `TASKS.md`, `task.md`, or
 `TASK.md` in the project directory, or `openspec/changes/<change>/tasks.md` for a
@@ -94,8 +95,10 @@ API, database, or production smoke test unless the command you configure is one.
 ## Context budget and handoff compaction
 
 The loop can be configured with a context budget and an optional
-handoff compactor. Both are loop-level concerns (set on `LoopConfig`
-or via the CLI), not project-level TOML values.
+handoff compactor. The budget is loop-level (`LoopConfig.context_budget`);
+`compact_handoff` is loop-level and project-level: set it in
+`.sisyphusfy.toml` as `compact_handoff = true` or pass
+`--compact-handoff` to `run`, `resume`, or `loop`.
 
 A `ContextBudget` carries a `max_input_tokens` cap and a policy:
 
@@ -104,6 +107,23 @@ A `ContextBudget` carries a `max_input_tokens` cap and a policy:
   `"rejected"` in the result's `context_telemetry`.
 - `"truncate"` applies a documented bounded reduction and records
   `budget_event: "truncated"`.
+
+Every agent invocation — including interactive blocked-resolution
+re-runs — passes through one shared `_prepare_prompt` helper
+(`apply_budget_to_prompt` + `telemetry.record`). A `reject` on a
+re-run stops with `context_budget_exceeded` without invoking the
+agent; every `RunRecord` carries its `ContextEstimate` and telemetry
+totals equal all invocations.
+
+Under `"truncate"`, handoff recovery content is shrunk first so the
+fixed instructions survive; only when the instructions alone still
+exceed the budget is the whole body cut. The truncation marker is
+always present.
+
+When `compact_handoff` is set, the loop compacts the handoff file
+with `HandoffCompactor` before rendering each iteration's prompt and
+records the before/after counts on telemetry (`compactions` /
+`last_compaction`).
 
 The core uses a `chars/4` estimate that is labelled with its
 measurement method. Adapters that know their tokeniser may attach
@@ -181,6 +201,7 @@ handoff_path = "HANDOFF.md"
 archive_enabled = false
 commit_enabled = false
 commit_allowed_files = []
+compact_handoff = false
 ```
 
 ## Commands that receive configuration values

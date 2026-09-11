@@ -285,3 +285,120 @@ class TestRenderPromptWithBudget:
             handoff_path="",
         )
         assert "/tmp/tasks.md" in out
+
+
+class TestRerunBudgetEnforcement:
+    def test_rerun_over_budget_rejects_without_invocation(self, tmp_path: Path) -> None:
+        from sisyphusfy.loop import LoopStopReason, PromptAnswer
+
+        task_path = tmp_path / "task.md"
+        task_path.write_text("- [ ] work\n")
+        cmd = _write_script(
+            tmp_path,
+            "agent.py",
+            "import sys; print('NEED_PERMISSION: delete file', file=sys.stderr); sys.exit(2)",
+        )
+        config = LoopConfig(
+            agent_command=cmd,
+            working_directory=str(tmp_path),
+            task_path=str(task_path),
+            prompt_template="do work",
+            max_iterations=3,
+            interactive=True,
+            prompt_user=lambda _b: PromptAnswer(denied=False, text="yes proceed with extra context " * 20),
+            context_budget=ContextBudget(max_input_tokens=10, policy="reject"),
+        )
+        result = run_loop(config)
+        assert result.stop_reason == LoopStopReason.CONTEXT_BUDGET_EXCEEDED
+        assert result.context_telemetry is not None
+        assert result.context_telemetry.budget_event == "rejected"
+        # Only the original blocked run; the over-budget re-run never invoked.
+        assert len(result.run_records) == 1
+
+    def test_rerun_records_carry_estimates_and_telemetry_counts_all(
+        self, tmp_path: Path
+    ) -> None:
+        from sisyphusfy.loop import PromptAnswer
+
+        task_path = tmp_path / "task.md"
+        task_path.write_text("- [ ] work\n")
+        cmd = _write_script(
+            tmp_path,
+            "agent.py",
+            textwrap.dedent(
+                """\
+                import sys
+                prompt = sys.stdin.read()
+                if "Continue the task with that decision applied." in prompt:
+                    print("done")
+                    sys.exit(0)
+                print("NEED_PERMISSION: delete file", file=sys.stderr)
+                sys.exit(2)
+                """
+            ),
+        )
+        config = LoopConfig(
+            agent_command=cmd,
+            working_directory=str(tmp_path),
+            task_path=str(task_path),
+            prompt_template="do work",
+            max_iterations=3,
+            interactive=True,
+            prompt_user=lambda _b: PromptAnswer(denied=False, text="go"),
+        )
+        result = run_loop(config)
+        assert len(result.run_records) >= 2
+        for rec in result.run_records:
+            assert rec.context_estimate is not None
+        telemetry = result.context_telemetry
+        assert telemetry is not None
+        assert len(telemetry.iterations) == len(result.run_records)
+        assert telemetry.estimated_total_input_tokens == sum(
+            e.tokens_estimated for e in telemetry.iterations
+        )
+
+
+class TestCompactWiring:
+    def test_compact_handoff_bounds_growth_and_records_counts(
+        self, tmp_path: Path
+    ) -> None:
+        task_path = tmp_path / "task.md"
+        task_path.write_text("- [ ] work\n")
+        handoff = tmp_path / "HANDOFF.md"
+        big = "x" * 10_000
+        handoff.write_text(f"## Completed\n\n{big}\n\n## Next action\n\ncontinue\n")
+        before = len(handoff.read_text())
+        cmd = _write_script(tmp_path, "agent.py", "pass")
+        config = LoopConfig(
+            agent_command=cmd,
+            working_directory=str(tmp_path),
+            task_path=str(task_path),
+            handoff_path=str(handoff),
+            prompt_template="do work",
+            max_iterations=1,
+            completion_strategy=MarkdownCheckboxCompletion(),
+            compact_handoff=True,
+        )
+        result = run_loop(config)
+        after = len(handoff.read_text())
+        assert after < before
+        assert result.context_telemetry is not None
+        assert result.context_telemetry.compactions
+        last = result.context_telemetry.compactions[-1]
+        assert last.before_chars == before
+        assert last.after_chars == after
+
+
+class TestHandoffFirstTruncation:
+    def test_truncate_keeps_instructions_and_marks(self) -> None:
+        from sisyphusfy.context import apply_budget_to_prompt
+
+        instructions = "INSTRUCTIONS: do the one task carefully."
+        recovery = "x" * 20_000
+        prompt = f"{instructions}\n\nHandoff recovery:\n{recovery}"
+        budget = ContextBudget(max_input_tokens=500, policy="truncate")
+        out, event = apply_budget_to_prompt(prompt, budget)
+        assert event == "truncated"
+        assert instructions in out
+        assert "[prompt truncated at" in out
+        assert len(out) < len(prompt)

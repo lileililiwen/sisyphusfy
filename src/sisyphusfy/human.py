@@ -518,6 +518,7 @@ def _dry_run_output(
         "archive_enabled": config.archive_enabled,
         "commit_enabled": config.commit_enabled,
         "commit_allowed_files": config.commit_allowed_files,
+        "compact_handoff": config.compact_handoff,
     }
 
     if json_output:
@@ -540,6 +541,7 @@ def _dry_run_output(
         print(f"  timeout:     {config.agent_timeout}s")
         print(f"  archive:     {'enabled' if config.archive_enabled else 'disabled'}")
         print(f"  commit:      {'enabled' if config.commit_enabled else 'disabled'}")
+        print(f"  compact-handoff: {'enabled' if config.compact_handoff else 'disabled'}")
 
     return 0
 
@@ -631,6 +633,7 @@ def _execute_loop(
         dry_run=False,
         workflow_config=workflow_config,
         interactive=effective_interactive,
+        compact_handoff=config.compact_handoff,
         # Progress is streamed for human output only; JSON stays machine-readable.
         progress=None if json_output else StreamProgress(stream=sys.stderr),
     )

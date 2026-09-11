@@ -25,6 +25,7 @@ from sisyphusfy.context import (
     ContextEstimate,
     ContextTelemetry,
     ExactUsage,
+    HandoffCompactor,
     apply_budget_to_prompt,
     estimate_text,
 )
@@ -488,6 +489,52 @@ def _augment_prompt(original: str, blocker: str, answer: PromptAnswer) -> str:
     return f"{original}{suffix}"
 
 
+def _prepare_prompt(
+    prompt: str,
+    budget: ContextBudget | None,
+    telemetry: ContextTelemetry,
+) -> tuple[str, ContextEstimate, str | None]:
+    """Apply the budget to one agent invocation and record telemetry.
+
+    The single shared entry point for the iteration head and the
+    interactive blocked-resolution re-run branch, so no invocation can
+    bypass budget enforcement when a budget is configured. The budget
+    event (``rejected``/``truncated``/``None``) is recorded on the
+    telemetry and every invocation appends its estimate.
+    """
+    if budget is None:
+        estimate = estimate_text(prompt)
+        telemetry.record(estimate)
+        return prompt, estimate, None
+    final, event = apply_budget_to_prompt(prompt, budget)
+    if event is not None:
+        telemetry.budget_event = event
+    estimate = estimate_text(final)
+    telemetry.record(estimate)
+    return final, estimate, event
+
+
+def _maybe_compact_handoff(
+    handoff_path: str | None,
+    enabled: bool,
+    telemetry: ContextTelemetry,
+) -> object | None:
+    """Compact the handoff file before rendering when opted in.
+
+    Rewrites only the configured handoff file through
+    :class:`HandoffCompactor` and records the before/after counts on
+    the telemetry. Returns the compaction result or ``None``.
+    """
+    if not enabled or not handoff_path:
+        return None
+    try:
+        result = HandoffCompactor().compact(handoff_path)
+    except OSError:
+        return None
+    telemetry.compactions.append(result)
+    return result
+
+
 def _resolve_under(working_directory: str, path: str) -> str:
     """Resolve a configured path against the loop working directory."""
     candidate = Path(path).expanduser()
@@ -921,32 +968,26 @@ def _run_loop(
 
         for i in range(1, config.max_iterations + 1):
             completed_iteration = i
-            prompt = _render_prompt_with_budget(
+            _maybe_compact_handoff(handoff_path, config.compact_handoff, telemetry)
+            raw = _render_prompt_with_budget(
                 config.prompt_template,
                 task_path=task_path,
                 handoff_path=handoff_path or "",
                 budget=config.context_budget,
             )
-            if config.context_budget is not None:
-                prompt, event = apply_budget_to_prompt(
-                    prompt, config.context_budget
+            prompt, estimate, event = _prepare_prompt(
+                raw, config.context_budget, telemetry
+            )
+            if event == "rejected":
+                return LoopResult(
+                    stop_reason=LoopStopReason.CONTEXT_BUDGET_EXCEEDED,
+                    iterations=i - 1,
+                    run_records=run_records,
+                    final_task_path=task_path,
+                    final_handoff_path=handoff_path,
+                    model_attempts=all_model_attempts,
+                    context_telemetry=telemetry,
                 )
-                if event == "rejected":
-                    telemetry.budget_event = "rejected"
-                    telemetry.record(estimate_text(prompt))
-                    return LoopResult(
-                        stop_reason=LoopStopReason.CONTEXT_BUDGET_EXCEEDED,
-                        iterations=i - 1,
-                        run_records=run_records,
-                        final_task_path=task_path,
-                        final_handoff_path=handoff_path,
-                        model_attempts=all_model_attempts,
-                        context_telemetry=telemetry,
-                    )
-                if event == "truncated":
-                    telemetry.budget_event = "truncated"
-            estimate = estimate_text(prompt)
-            telemetry.record(estimate)
 
             def _run_with_model(model: str | None = None, p: str = prompt) -> object:
                 on_output, on_heartbeat = agent_cbs
@@ -1035,9 +1076,27 @@ def _run_loop(
                         if answer.denied:
                             return _blocked_stop(i, blocker)
                         augmented = _augment_prompt(prompt, blocker, answer)
-                        result = _run_with_model(p=augmented)
+                        rerun_prompt, rerun_estimate, rerun_event = _prepare_prompt(
+                            augmented, config.context_budget, telemetry
+                        )
+                        if rerun_event == "rejected":
+                            return LoopResult(
+                                stop_reason=LoopStopReason.CONTEXT_BUDGET_EXCEEDED,
+                                iterations=i,
+                                run_records=run_records,
+                                final_task_path=task_path,
+                                final_handoff_path=handoff_path,
+                                model_attempts=all_model_attempts,
+                                context_telemetry=telemetry,
+                            )
+                        result = _run_with_model(p=rerun_prompt)
                         run_records.append(
-                            RunRecord(iteration=i, result=result, prompt=augmented)
+                            RunRecord(
+                                iteration=i,
+                                result=result,
+                                prompt=rerun_prompt,
+                                context_estimate=rerun_estimate,
+                            )
                         )
                         if len(run_records) > config.max_run_records:
                             run_records = run_records[-config.max_run_records:]
