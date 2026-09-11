@@ -187,6 +187,30 @@ The low-level `sisyphusfy loop` command additionally takes
 Denial or an unresolvable blocker always stops the iteration with `blocked`, and
 verification and completion hooks never run on a blocked run.
 
+### Control surface: ESC pause and slash commands
+
+An interactive run can be steered without killing it:
+
+- **ESC** pauses at the next safe point (an iteration boundary or inside the
+  blocked prompt) and offers `resume` / `stop` / `step` (run one iteration,
+  then pause again). Arrow keys and other escape sequences never pause.
+  v1 never suspends a running subprocess: an ESC arriving mid-invocation
+  takes effect when that invocation returns. On Windows (no POSIX
+  `termios`), key listening is unavailable and Ctrl-C remains the only
+  interrupt; piped/CI/`--json` runs never install key handling.
+- The blocked prompt is a small REPL. Alongside plain-text answers and
+  approve/deny it accepts:
+  - `/models [name]` — list the configured chain with active/unsupported
+    marks, or switch to `<name>` for subsequent invocations (refused with
+    the reason when the adapter reports it unsupported).
+  - `/compact` — compact the handoff file now via `HandoffCompactor` and
+    report before/after counts; the next prompt renders the compacted file.
+  - `/help` — list commands; `/resume` — continue; `/stop` — end as `blocked`.
+- Slash input is always consumed by the parser and never folded into the
+  agent prompt; unknown `/` input prints help and re-prompts.
+- Every control action is auditable: `LoopResult` carries `pause_count` and
+  `model_switches`, and compactions land on the context telemetry.
+
 ## Example
 
 ```toml

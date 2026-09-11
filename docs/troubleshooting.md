@@ -96,6 +96,12 @@ approve (or type your answer), or 'deny'/'no' to stop:
   `denied (empty input)` so an accidental Enter can never approve.
 - A privileged or destructive blocker is never auto-approved; it always requires
   your explicit response.
+- The prompt is a small REPL: `/models [name]` switches models,
+  `/compact` compacts the handoff now, `/help` lists commands,
+  `/resume` continues, `/stop` ends as `blocked`. Slash input never
+  reaches the agent. ESC pauses at the next safe point with
+  resume/stop/step choices (see [configuration](configuration.md));
+  v1 never suspends a running subprocess.
 
 Re-prompts are bounded (default 3 per iteration, `--max-interactive-prompts` on
 the low-level `loop` command). If the agent keeps blocking past the cap, the run

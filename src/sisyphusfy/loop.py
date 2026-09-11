@@ -29,6 +29,13 @@ from sisyphusfy.context import (
     apply_budget_to_prompt,
     estimate_text,
 )
+from sisyphusfy.control import (
+    ControlState,
+    KeyWatcher,
+    ReplContext,
+    handle_prompt_text,
+    pause_menu,
+)
 from sisyphusfy.diagnostics import (
     bound_output,
     make_run_id,
@@ -226,6 +233,7 @@ class LoopConfig:
     trust_paths_outside_root: bool = False
     context_budget: ContextBudget | None = None
     compact_handoff: bool = False
+    control_state: ControlState | None = None
 
 
 @dataclass
@@ -291,6 +299,8 @@ class LoopResult:
     agent_error: AgentError | None = None
     blocked_reason: str | None = None
     context_telemetry: ContextTelemetry | None = None
+    pause_count: int = 0
+    model_switches: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -322,6 +332,10 @@ class LoopResult:
             d["blocked_reason"] = self.blocked_reason
         if self.context_telemetry is not None:
             d["context_telemetry"] = self.context_telemetry.to_dict()
+        if self.pause_count:
+            d["pause_count"] = self.pause_count
+        if self.model_switches:
+            d["model_switches"] = list(self.model_switches)
         return d
 
 
@@ -695,11 +709,14 @@ def run_loop(config: LoopConfig) -> LoopResult:
     """Run the loop and attach the evidence from its last verification."""
     evidence: dict[str, VerificationEvidence] = {}
     telemetry = ContextTelemetry(budget=config.context_budget)
-    result = _run_loop(config, evidence, telemetry)
+    control = config.control_state if config.control_state is not None else ControlState()
+    result = _run_loop(config, evidence, telemetry, control)
     if result.verification is None and COMPONENT_VERIFY in evidence:
         result.verification = evidence[COMPONENT_VERIFY]
     if result.context_telemetry is None:
         result.context_telemetry = telemetry
+    result.pause_count = control.pause_count
+    result.model_switches = list(control.model_switches)
     return result
 
 
@@ -707,6 +724,7 @@ def _run_loop(
     config: LoopConfig,
     evidence: dict[str, VerificationEvidence],
     telemetry: ContextTelemetry,
+    control: ControlState | None = None,
 ) -> LoopResult:
     working_directory = str(Path(config.working_directory).resolve())
     trust_outside = config.trust_paths_outside_root
@@ -772,6 +790,58 @@ def _run_loop(
     run_id = make_run_id()
     agent_cbs = progress_callbacks(config.progress, COMPONENT_AGENT)
     verify_cbs = progress_callbacks(config.progress, COMPONENT_VERIFY)
+
+    if control is None:
+        control = ControlState()
+    watcher = KeyWatcher(control)
+    if config.interactive:
+        # No-op unless stdin is a POSIX tty; piped/CI runs never see keys.
+        watcher.start()
+
+    def _emit_control(message: str) -> None:
+        sys.stderr.write(message + "\n")
+        sys.stderr.flush()
+
+    def _repl_context() -> ReplContext:
+        current_adapter = adapter
+        if current_adapter is not None:
+            supports = current_adapter.supports_model
+            default_model = getattr(current_adapter, "model", None)
+        else:
+            supports = lambda _m: True
+            default_model = None
+        return ReplContext(
+            model_chain=list(config.model_chain),
+            default_model=default_model,
+            supports_model=supports,
+            handoff_path=handoff_path,
+            on_compact=lambda: _maybe_compact_handoff(
+                handoff_path, True, telemetry
+            ),
+            emit=_emit_control,
+        )
+
+    def _pause_interactive() -> str:
+        """Present the pause menu; returns resume, stop, or step."""
+        reader = config.prompt_user
+        if reader is None:
+            return "resume"
+        with watcher.suspended():
+            action = pause_menu(reader, _repl_context(), control)
+        control.pending_pause = False
+        control.pause_count += 1
+        return action
+
+    def _stop_interrupted(iteration: int) -> LoopResult:
+        return LoopResult(
+            stop_reason=LoopStopReason.INTERRUPTED,
+            iterations=iteration,
+            run_records=run_records,
+            final_task_path=task_path,
+            final_handoff_path=handoff_path,
+            model_attempts=all_model_attempts,
+            context_telemetry=telemetry,
+        )
 
     def _record_evidence(
         result: RunResult,
@@ -968,6 +1038,16 @@ def _run_loop(
 
         for i in range(1, config.max_iterations + 1):
             completed_iteration = i
+            if config.interactive and config.prompt_user is not None:
+                if control.step_after:
+                    control.step_after = False
+                    control.pending_pause = True
+                if control.pending_pause:
+                    boundary_action = _pause_interactive()
+                    if boundary_action == "stop":
+                        return _stop_interrupted(i - 1)
+                    if boundary_action == "step":
+                        control.step_after = True
             _maybe_compact_handoff(handoff_path, config.compact_handoff, telemetry)
             raw = _render_prompt_with_budget(
                 config.prompt_template,
@@ -1006,44 +1086,53 @@ def _run_loop(
 
             if config.model_chain:
                 fallback_adapter = adapter or _make_generic(config.agent_command)
-                try:
-                    result, attempts = try_fallback(
-                        fallback_adapter,
-                        config.model_chain,
-                        working_directory,
-                        prompt,
-                        _run_with_model,
-                    )
-                    all_model_attempts.extend(attempts)
-                except ModelChainExhausted as exc:
-                    if exc.last_result is None:
-                        # No attempt ran: every model was skipped as
-                        # unsupported. Stop with the skip list as the audit
-                        # trail instead of agent evidence there is none.
-                        skipped = getattr(exc, "skipped", []) or list(
-                            config.model_chain
+                if control.active_model is not None:
+                    # Operator-switched model: run it directly for this and
+                    # all subsequent invocations instead of rotating the chain.
+                    result = _run_with_model(model=control.active_model)
+                    all_model_attempts.append(control.active_model)
+                else:
+                    try:
+                        result, attempts = try_fallback(
+                            fallback_adapter,
+                            config.model_chain,
+                            working_directory,
+                            prompt,
+                            _run_with_model,
                         )
-                        return LoopResult(
-                            stop_reason=LoopStopReason.MODELS_EXHAUSTED,
-                            iterations=i,
-                            run_records=run_records,
-                            final_task_path=task_path,
-                            final_handoff_path=handoff_path,
+                        all_model_attempts.extend(attempts)
+                    except ModelChainExhausted as exc:
+                        if exc.last_result is None:
+                            # No attempt ran: every model was skipped as
+                            # unsupported. Stop with the skip list as the audit
+                            # trail instead of agent evidence there is none.
+                            skipped = getattr(exc, "skipped", []) or list(
+                                config.model_chain
+                            )
+                            return LoopResult(
+                                stop_reason=LoopStopReason.MODELS_EXHAUSTED,
+                                iterations=i,
+                                run_records=run_records,
+                                final_task_path=task_path,
+                                final_handoff_path=handoff_path,
+                                model_attempts=exc.attempts,
+                                adapter_error=(
+                                    "no supported model in chain: "
+                                    f"{', '.join(skipped)}"
+                                ),
+                                context_telemetry=telemetry,
+                            )
+                        return _agent_stop(
+                            LoopStopReason.MODELS_EXHAUSTED,
+                            i,
+                            exc.last_result,
                             model_attempts=exc.attempts,
-                            adapter_error=(
-                                "no supported model in chain: "
-                                f"{', '.join(skipped)}"
-                            ),
-                            context_telemetry=telemetry,
                         )
-                    return _agent_stop(
-                        LoopStopReason.MODELS_EXHAUSTED,
-                        i,
-                        exc.last_result,
-                        model_attempts=exc.attempts,
-                    )
             else:
-                result = _run_with_model(model=adapter.model if adapter else None)
+                active = control.active_model
+                if active is None and adapter is not None:
+                    active = adapter.model
+                result = _run_with_model(model=active)
 
             rec = RunRecord(
                 iteration=i,
@@ -1070,12 +1159,41 @@ def _run_loop(
                 blocker = _extract_blocker(result, config.blocked_markers)
                 if config.interactive and config.prompt_user is not None:
                     prompt_user = config.prompt_user
+                    repl = _repl_context()
                     resolved = False
-                    for _ in range(config.max_interactive_prompts):
-                        answer = prompt_user(blocker)
-                        if answer.denied:
+                    reruns = 0
+                    while True:
+                        if control.pending_pause:
+                            repl_action = _pause_interactive()
+                            if repl_action == "stop":
+                                return _stop_interrupted(i)
+                            if repl_action == "step":
+                                control.step_after = True
+                            continue
+                        with watcher.suspended():
+                            answer = prompt_user(blocker)
+                        if getattr(answer, "denied", False):
                             return _blocked_stop(i, blocker)
-                        augmented = _augment_prompt(prompt, blocker, answer)
+                        decision = handle_prompt_text(
+                            getattr(answer, "text", "") or "", repl, control
+                        )
+                        if decision.action == "reprompt":
+                            # A slash command was consumed; re-prompt without
+                            # spending the bounded re-run budget.
+                            continue
+                        if decision.action == "stop":
+                            return _blocked_stop(i, blocker)
+                        if decision.action == "resume":
+                            answer_text = ""
+                        elif decision.action == "answer":
+                            answer_text = decision.text
+                        else:  # "step" has no meaning mid-block; keep prompting.
+                            continue
+                        if reruns >= config.max_interactive_prompts:
+                            return _blocked_stop(i, blocker)
+                        reruns += 1
+                        use_answer = PromptAnswer(denied=False, text=answer_text)
+                        augmented = _augment_prompt(prompt, blocker, use_answer)
                         rerun_prompt, rerun_estimate, rerun_event = _prepare_prompt(
                             augmented, config.context_budget, telemetry
                         )
@@ -1089,7 +1207,9 @@ def _run_loop(
                                 model_attempts=all_model_attempts,
                                 context_telemetry=telemetry,
                             )
-                        result = _run_with_model(p=rerun_prompt)
+                        result = _run_with_model(
+                            model=control.active_model, p=rerun_prompt
+                        )
                         run_records.append(
                             RunRecord(
                                 iteration=i,
@@ -1196,6 +1316,8 @@ def _run_loop(
             model_attempts=all_model_attempts,
             context_telemetry=telemetry,
         )
+    finally:
+        watcher.stop()
 
     return LoopResult(
         stop_reason=LoopStopReason.MAX_ITERATIONS,
