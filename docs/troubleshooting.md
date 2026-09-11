@@ -88,11 +88,12 @@ pauses, shows the blocker, and asks for a decision:
 approve (or type your answer), or 'deny'/'no' to stop:
 ```
 
-- Approve (empty input, or any free text): the loop re-runs the agent in the
+- Approve (any free text): the loop re-runs the agent in the
   same iteration with your answer folded into the prompt, then continues past
   the blocker.
-- Deny (`deny`/`no`/`n`): the iteration stops with `blocked`, exactly as the
-  non-interactive path.
+- Deny (`deny`/`no`/`n`, or empty input): the iteration stops with `blocked`,
+  exactly as the non-interactive path. Empty input reports
+  `denied (empty input)` so an accidental Enter can never approve.
 - A privileged or destructive blocker is never auto-approved; it always requires
   your explicit response.
 

@@ -130,6 +130,8 @@ def _read_terminal_answer(blocker: str) -> PromptAnswer:
     denial. Any other input is an approval (the text becomes the operator's
     answer). On EOF/error it denies, so a piped run can never hang here -- the
     loop engine still stops with ``blocked`` as in the non-interactive path.
+    An empty-input denial is reported explicitly so an accidental Enter can
+    never silently abort the run.
     """
     try:
         sys.stderr.write("\n[sisyphusfy] agent is blocked and needs a decision:\n")
@@ -143,6 +145,10 @@ def _read_terminal_answer(blocker: str) -> PromptAnswer:
     if not raw:
         return PromptAnswer(denied=True)
     text = raw.strip()
+    if not text:
+        sys.stderr.write("denied (empty input)\n")
+        sys.stderr.flush()
+        return PromptAnswer(denied=True)
     if text.lower() in {"deny", "no", "n"}:
         return PromptAnswer(denied=True)
     return PromptAnswer(denied=False, text=text)
@@ -214,7 +220,7 @@ class LoopConfig:
     heartbeat_interval: float = DEFAULT_HEARTBEAT_SECONDS
     interactive: bool = False
     max_interactive_prompts: int = 3
-    prompt_user: Callable[[str], PromptAnswer] | None = None
+    prompt_user: Callable[[str], PromptAnswer] | None = _read_terminal_answer
     workspace_evidence: list[str] = field(default_factory=list)
     trust_paths_outside_root: bool = False
     context_budget: ContextBudget | None = None
@@ -437,21 +443,24 @@ def _render_prompt_with_budget(
     return body
 
 
-def _extract_blocker(result: object) -> str:
+def _extract_blocker(result: object, markers: list[str] | None = None) -> str:
     """Pull the blocker text out of an agent run that emitted a blocked marker.
 
     Prefers the lines that actually contain a configured marker; falls back to
     the whole combined output so the operator still sees context. Kept short so
-    it renders readably inside an interactive prompt.
+    it renders readably inside an interactive prompt. ``markers`` defaults to
+    the global marker set; callers with configured markers pass them so the
+    extraction agrees with the detection in :func:`_is_blocked`.
     """
     stdout = getattr(result, "stdout", "") or ""
     stderr = getattr(result, "stderr", "") or ""
     combined = f"{stdout}\n{stderr}"
+    active = [m for m in (markers if markers is not None else BLOCKED_MARKERS) if m and m.strip()]
     marker_lines = [
         line
         for line in combined.splitlines()
         if line.strip()
-        for marker in BLOCKED_MARKERS
+        for marker in active
         if _marker_token_present(line.strip(), marker) or line.strip() == marker
     ]
     if marker_lines:
@@ -1002,7 +1011,7 @@ def _run_loop(
                 return _agent_stop(LoopStopReason.TIMEOUT, i, result)
 
             if _is_blocked(result, config.blocked_markers):
-                blocker = _extract_blocker(result)
+                blocker = _extract_blocker(result, config.blocked_markers)
                 if config.interactive and config.prompt_user is not None:
                     prompt_user = config.prompt_user
                     resolved = False
@@ -1026,7 +1035,7 @@ def _run_loop(
                             resolved = True
                             break
                         # Still blocked: refresh the blocker text and re-prompt.
-                        blocker = _extract_blocker(result)
+                        blocker = _extract_blocker(result, config.blocked_markers)
                     if resolved:
                         # Continues past the blocker into verification/completion.
                         pass

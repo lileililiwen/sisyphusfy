@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sisyphusfy.config import (
     ConfigurationError,
@@ -25,6 +27,9 @@ from sisyphusfy.git import DiffMode, GitInspection
 from sisyphusfy.git import inspect as git_inspect
 from sisyphusfy.progress import StreamProgress, format_duration
 from sisyphusfy.result import format_command
+
+if TYPE_CHECKING:
+    from sisyphusfy.loop import PromptAnswer
 
 # How many trailing output lines a timeout report shows.
 TIMEOUT_TAIL_LINES = 5
@@ -550,6 +555,7 @@ def _execute_loop(
     json_output: bool,
     verbose: bool = False,
     interactive: bool | None = None,
+    prompt_user: Callable[[str], PromptAnswer] | None = None,
 ) -> int:
     from sisyphusfy.adapters import AdapterConfig
     from sisyphusfy.hooks import HookConfig, HookType
@@ -628,6 +634,8 @@ def _execute_loop(
         # Progress is streamed for human output only; JSON stays machine-readable.
         progress=None if json_output else StreamProgress(stream=sys.stderr),
     )
+    if prompt_user is not None:
+        loop_config.prompt_user = prompt_user
 
     result = run_loop(loop_config)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import sys
 import textwrap
 from pathlib import Path
@@ -34,6 +35,93 @@ import sys
 print("NEED_PERMISSION: delete file", file=sys.stderr)
 sys.exit(2)
 '''
+
+# A fake agent that always blocks on a custom marker plus context lines.
+BLOCK_CUSTOM = '''\
+import sys
+print("working on the task...")
+print("AWAITING_INPUT: pick a region", file=sys.stderr)
+sys.exit(2)
+'''
+
+
+class TestDefaultPrompt:
+    def test_default_prompt_fires_without_explicit_prompt_user(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """LoopConfig(interactive=True) prompts out of the box (task 1.1)."""
+        task_path = tmp_path / "task.md"
+        task_path.write_text("- [ ] work\n")
+
+        cmd = _write_script(tmp_path, "agent.py", BLOCK_THEN_RESOLVE)
+        monkeypatch.setattr(sys, "stdin", io.StringIO("yes, proceed\n"))
+
+        config = LoopConfig(
+            agent_command=cmd,
+            working_directory=str(tmp_path),
+            task_path=str(task_path),
+            prompt_template="do work",
+            max_iterations=3,
+            interactive=True,
+        )
+
+        result = run_loop(config)
+
+        assert result.stop_reason != LoopStopReason.BLOCKED
+        assert "yes, proceed" in result.run_records[-1].prompt
+
+    def test_custom_marker_extraction(self, tmp_path: Path) -> None:
+        """Blocker text uses configured markers, not the fallback dump (task 1.2)."""
+        task_path = tmp_path / "task.md"
+        task_path.write_text("- [ ] work\n")
+
+        cmd = _write_script(tmp_path, "agent.py", BLOCK_CUSTOM)
+        seen: list[str] = []
+
+        def prompt_user(blocker: str) -> PromptAnswer:
+            seen.append(blocker)
+            return PromptAnswer(denied=True)
+
+        config = LoopConfig(
+            agent_command=cmd,
+            working_directory=str(tmp_path),
+            task_path=str(task_path),
+            prompt_template="do work",
+            max_iterations=3,
+            interactive=True,
+            blocked_markers=["AWAITING_INPUT"],
+            prompt_user=prompt_user,
+        )
+
+        result = run_loop(config)
+
+        assert result.stop_reason == LoopStopReason.BLOCKED
+        assert seen == ["AWAITING_INPUT: pick a region"]
+
+    def test_empty_input_denies_visibly(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """Empty input denies and says so instead of silently aborting (task 1.3)."""
+        task_path = tmp_path / "task.md"
+        task_path.write_text("- [ ] work\n")
+
+        cmd = _write_script(tmp_path, "agent.py", BLOCK_ALWAYS)
+        monkeypatch.setattr(sys, "stdin", io.StringIO("\n"))
+
+        config = LoopConfig(
+            agent_command=cmd,
+            working_directory=str(tmp_path),
+            task_path=str(task_path),
+            prompt_template="do work",
+            max_iterations=3,
+            interactive=True,
+        )
+
+        result = run_loop(config)
+
+        assert result.stop_reason == LoopStopReason.BLOCKED
+        assert len(result.run_records) == 1
+        assert "denied (empty input)" in capsys.readouterr().err
 
 
 class TestInteractiveApprove:
