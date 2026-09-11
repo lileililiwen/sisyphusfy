@@ -12,11 +12,11 @@ All product changes use OpenSpec:
 propose → validate → implement → verify → archive
 ```
 
-Read `openspec/config.yaml`, the active change, and relevant source before implementation. Do not implement a change until its `design.md` has human approval.
+Read `openspec/config.yaml`, the active change, and relevant source before implementation. Design approval is automatic: a change whose proposal, design, tasks, and specs pass `openspec validate --all --strict` is approved — implement immediately without waiting for an explicit human "approved". Only an explicit user hold blocks implementation.
 
 ## Change completion workflow
 
-After `verify` passes (focused tests, full suite, `ruff check`, `compileall`, `openspec validate --all --strict`), close out the change in two commits so the change history is decoupled from the meta-status history:
+After `verify` passes (focused tests, full suite, `ruff check`, `compileall`, `openspec validate --all --strict`), close out the change in two commits so the change history is decoupled from the meta-status history. This closeout is automatic: archive and commit without asking for confirmation.
 
 1. Mark every task in `tasks.md` complete (`[x]`).
 2. Archive the change with `openspec archive <name> --yes`. This moves the
@@ -35,6 +35,18 @@ After `verify` passes (focused tests, full suite, `ruff check`, `compileall`, `o
 This two-commit split keeps the change itself reviewable on its own and
 makes the meta-status history easy to skim. It is the default local
 workflow. Push, tag, and release still require explicit user authorization.
+
+## Automation rules
+
+The full local loop is automatic — never stop to ask a human for any of these:
+
+- Design approval (validation passing IS the approval).
+- Verify, archive, and the two closeout commits.
+
+Local commits are cheap and reversible, so they are the default closeout.
+Still requiring explicit user authorization (irreversible or network-visible,
+never silent): push, tag, release, and any privileged or destructive
+operation outside the normal build/test/archive/commit flow.
 
 ## Core boundaries
 
