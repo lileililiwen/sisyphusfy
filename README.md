@@ -18,6 +18,7 @@ It is for developers who want repeatable agent-assisted development without coup
 - **Read-only Git inspection:** `sisyphusfy status --diff` and `sisyphusfy diff` show a bounded Git status and unified diff (default 50 KB, with a `truncated` flag) without ever staging, committing, or pushing.
 - **Component-labelled diagnostics:** every managed subprocess (agent, verification, hook, workflow) writes to its own file under `<project>/.sisyphusfy/logs/`, with shared retention and a `--inspect` flag that reads the most recent log without rerunning the loop.
 - **Context budget:** a configurable input cap with `reject` or `truncate` policy, a deterministic `chars/4` estimate, and structured `ContextTelemetry` so operators see what was sent and what was truncated.
+- **Interactive steering:** on a terminal, ESC pauses at the next safe point with resume/stop/step choices, and the blocked prompt accepts `/models` (list or switch models mid-run), `/compact` (compact the handoff now), `/help`, `/resume`, and `/stop` — slash input never reaches the agent.
 - **Workspace progress:** opt-in source-change evidence keeps the loop running when the agent edits files outside the task/handoff snapshot, while ordinary case-by-case progress still uses the durable task/handoff files.
 - **Configuration safety:** malformed TOML raises a structured `ConfigurationError` naming the source; paths must resolve inside the project directory by default, with an explicit opt-out for system-wide state.
 
@@ -298,6 +299,7 @@ strings, and retained output stays bounded.
 | [docs/adapters.md](docs/adapters.md) | `AgentAdapter` protocol, registry, command construction, model fallback, failure classification, structured agent error parsing, workflow adapters |
 | [docs/examples.md](docs/examples.md) | Minimal end-to-end setups for Python, Rust, JavaScript, Flutter, and .NET |
 | [docs/ci.md](docs/ci.md) | Continuous-integration usage and JSON result consumption |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Blocked runs, diagnostics inspection, and common failure recovery |
 | [docs/security.md](docs/security.md) | Command-execution model and review checklist |
 | [docs/deployment.md](docs/deployment.md) | GitHub Pages and custom domain setup |
 
